@@ -6,13 +6,12 @@ from docxtpl import DocxTemplate
 from docx import Document
 import json
 import re
-import subprocess
-import platform
-
-from fastapi import FastAPI
-from fastapi.staticfiles import StaticFiles
-import uvicorn
 import threading
+from fastapi import FastAPI
+from fastapi.responses import FileResponse
+import uvicorn
+from reportlab.lib.pagesizes import LETTER
+from reportlab.pdfgen import canvas
 
 # ---------------------------
 # Setup folders and templates
@@ -40,27 +39,31 @@ def save_template(template_name, file_path, fields):
     with open("templates.json", "w") as f:
         json.dump(templates, f, indent=4)
 
-def convert_to_pdf(input_path, output_path):
+def convert_docx_to_pdf(input_path, output_path):
+    """Convert DOCX to PDF (text only) using reportlab"""
     try:
-        system = platform.system()
-        if system == "Windows" or system == "Darwin":
-            from docx2pdf import convert
-            convert(input_path, output_path)
-        else:
-            subprocess.run([
-                "libreoffice",
-                "--headless",
-                "--convert-to", "pdf",
-                "--outdir", os.path.dirname(output_path),
-                input_path
-            ], check=True)
+        doc = Document(input_path)
+        text = "\n".join([p.text for p in doc.paragraphs if p.text.strip()])
+
+        c = canvas.Canvas(output_path, pagesize=LETTER)
+        width, height = LETTER
+        y = height - 50
+
+        for line in text.split("\n"):
+            c.drawString(50, y, line)
+            y -= 15
+            if y < 50:
+                c.showPage()
+                y = height - 50
+
+        c.save()
         return True
     except Exception as e:
-        print(f"Error converting to PDF: {e}")
+        print(f"PDF conversion failed: {e}")
         return False
 
 # ---------------------------
-# Bot Setup
+# Discord Bot Setup
 # ---------------------------
 intents = discord.Intents.default()
 intents.message_content = True
@@ -162,9 +165,9 @@ async def generate_document(interaction: discord.Interaction, template_name: str
 
     # Convert to PDF
     output_pdf = output_docx.replace(".docx", ".pdf")
-    if convert_to_pdf(output_docx, output_pdf):
+    if convert_docx_to_pdf(output_docx, output_pdf):
         file_url = f"{BASE_URL}/generated/{os.path.basename(output_pdf)}"
-        await dm_channel.send(f"Here is your document: {file_url}")
+        await dm_channel.send(f"Here is your document (PDF viewable in browser): {file_url}")
     else:
         file_url = f"{BASE_URL}/generated/{os.path.basename(output_docx)}"
         await dm_channel.send(f"Here is your document (DOCX only): {file_url}")
@@ -173,12 +176,19 @@ async def generate_document(interaction: discord.Interaction, template_name: str
 # FastAPI App
 # ---------------------------
 app = FastAPI()
-app.mount("/generated", StaticFiles(directory="generated"), name="generated")
 
-# Railway will give you a public URL like https://your-app-name.up.railway.app
+@app.get("/generated/{filename}")
+async def serve_file(filename: str):
+    file_path = os.path.join("generated", filename)
+    if not os.path.exists(file_path):
+        return {"error": "File not found"}
+    return FileResponse(file_path, headers={"Content-Disposition": "inline"})
+
+# Railway public URL
 BASE_URL = os.environ.get("RAILWAY_PUBLIC_DOMAIN", "http://localhost:8000")
 
 def run_api():
+    import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=int(os.environ.get("PORT", 8000)))
 
 # ---------------------------
