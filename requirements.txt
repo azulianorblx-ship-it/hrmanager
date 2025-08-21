@@ -2,3 +2,5 @@ discord.py
 python-docx
 docxtpl
 docx2pdf
+fastapi
+uvicorn[standard]
