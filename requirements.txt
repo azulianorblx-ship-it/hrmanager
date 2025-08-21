@@ -1,6 +1,6 @@
 discord.py
-python-docx
 docxtpl
-docx2pdf
+python-docx
 fastapi
 uvicorn[standard]
+reportlab
