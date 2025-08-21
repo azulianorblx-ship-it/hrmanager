@@ -21,6 +21,10 @@ if not os.path.exists("templates.json"):
     with open("templates.json", "w") as f:
         json.dump({}, f)
 
+if not os.path.exists("dm_templates.json"):
+    with open("dm_templates.json", "w") as f:
+        json.dump({}, f)
+
 # ---------------------------
 # Helper functions
 # ---------------------------
@@ -35,6 +39,13 @@ def save_template(template_name, file_path, fields):
         templates = json.load(f)
     templates[template_name] = {"file_path": file_path, "fields": fields}
     with open("templates.json", "w") as f:
+        json.dump(templates, f, indent=4)
+
+def save_dm_template(template_name, content, fields):
+    with open("dm_templates.json", "r") as f:
+        templates = json.load(f)
+    templates[template_name] = {"content": content, "fields": fields}
+    with open("dm_templates.json", "w") as f:
         json.dump(templates, f, indent=4)
 
 # ---------------------------
@@ -57,7 +68,7 @@ bot = MyBot()
 @bot.event
 async def on_ready():
     print(f"Logged in as {bot.user}")
-    await bot.change_presence(activity=discord.Game(name="Crown & Cabinet"))
+    await bot.change_presence(activity=discord.Game(name="HR Manager Active"))
 
 # ---------------------------
 # DOCX Commands
@@ -72,7 +83,6 @@ async def add_template(interaction: discord.Interaction):
     except:
         await interaction.followup.send("Timeout or error waiting for file.")
         return
-
     file = msg.attachments[0]
     await interaction.followup.send("What should the template name be?")
     try:
@@ -84,7 +94,6 @@ async def add_template(interaction: discord.Interaction):
     except:
         await interaction.followup.send("Timeout or error waiting for template name.")
         return
-
     template_name = name_msg.content
     file_path = f"templates/{file.filename}"
     await file.save(file_path)
@@ -127,113 +136,100 @@ async def generate_document(interaction: discord.Interaction, template_name: str
     await dm_channel.send(f"Here is your document (viewable in browser): {view_url}")
 
 # ---------------------------
+# DM Template Commands
+# ---------------------------
+@bot.tree.command(name="create_dm_template", description="Create a new DM template")
+async def create_dm_template(interaction: discord.Interaction):
+    await interaction.response.send_message("Send the template message in DM to the bot.")
+    dm = await interaction.user.create_dm()
+    try:
+        msg = await bot.wait_for("message", check=lambda m: m.author == interaction.user and isinstance(m.channel, discord.DMChannel), timeout=300)
+    except:
+        await dm.send("Timeout. Template creation cancelled.")
+        return
+    content = msg.content
+    fields = re.findall(r"\{\{(.*?)\}\}", content)
+    await dm.send("What should the template name be?")
+    try:
+        name_msg = await bot.wait_for("message", check=lambda m: m.author == interaction.user, timeout=60)
+    except:
+        await dm.send("Timeout. Template creation cancelled.")
+        return
+    template_name = name_msg.content
+    save_dm_template(template_name, content, fields)
+    await dm.send(f"DM template '{template_name}' saved with fields: {fields}")
+
+@bot.tree.command(name="dm", description="Send a DM to a user, optionally using a template")
+@app_commands.describe(user="User to DM", template_name="Optional template name")
+async def dm_user(interaction: discord.Interaction, user: discord.User, template_name: str = None):
+    dm_channel = await user.create_dm()
+    responses = {}
+    content_to_send = ""
+    if template_name:
+        with open("dm_templates.json", "r") as f:
+            templates = json.load(f)
+        if template_name not in templates:
+            await interaction.response.send_message("Template not found.", ephemeral=True)
+            return
+        template = templates[template_name]
+        fields = template["fields"]
+        for field in fields:
+            await interaction.response.send_message(f"Please provide value for {field}", ephemeral=True)
+            try:
+                msg = await bot.wait_for("message", check=lambda m: m.author == interaction.user and m.channel == interaction.channel, timeout=300)
+                responses[field] = msg.content
+            except:
+                await interaction.response.send_message("Timeout. DM cancelled.", ephemeral=True)
+                return
+        content_to_send = template["content"]
+        for k, v in responses.items():
+            content_to_send = content_to_send.replace(f"{{{{{k}}}}}", v)
+    else:
+        await interaction.response.send_message("Enter the message content to send:", ephemeral=True)
+        try:
+            msg = await bot.wait_for("message", check=lambda m: m.author == interaction.user and m.channel == interaction.channel, timeout=300)
+            content_to_send = msg.content
+        except:
+            await interaction.response.send_message("Timeout. DM cancelled.", ephemeral=True)
+            return
+    await dm_channel.send(content_to_send)
+    await interaction.response.send_message(f"Message sent to {user.mention}.", ephemeral=True)
+
+# ---------------------------
+# List Commands
+# ---------------------------
+@bot.tree.command(name="list_dm_templates", description="List all DM templates")
+async def list_dm_templates(interaction: discord.Interaction):
+    with open("dm_templates.json", "r") as f:
+        templates = json.load(f)
+    if not templates:
+        await interaction.response.send_message("No DM templates found.", ephemeral=True)
+        return
+    template_list = "\n".join(f"- {name}" for name in templates.keys())
+    await interaction.response.send_message(f"**DM Templates:**\n{template_list}", ephemeral=True)
+
+@bot.tree.command(name="list_generated_templates", description="List all DOCX templates")
+async def list_generated_templates(interaction: discord.Interaction):
+    with open("templates.json", "r") as f:
+        templates = json.load(f)
+    if not templates:
+        await interaction.response.send_message("No DOCX templates found.", ephemeral=True)
+        return
+    template_list = "\n".join(f"- {name}" for name in templates.keys())
+    await interaction.response.send_message(f"**DOCX Templates:**\n{template_list}", ephemeral=True)
+
+# ---------------------------
 # FastAPI App
 # ---------------------------
 app = FastAPI()
 app.mount("/generated", StaticFiles(directory="generated"), name="generated")
 BASE_URL = os.environ.get("RAILWAY_PUBLIC_DOMAIN", "http://localhost:8000")
+
 def run_api():
     uvicorn.run(app, host="0.0.0.0", port=int(os.environ.get("PORT", 8000)))
 
 # ---------------------------
-# Vacancy/HR Commands
-# ---------------------------
-RECRUITMENT_ROLE_ID = 1407614964214267934
-CAREERS_CHANNEL_ID = 1405613279648153743
-ticket_threads = {}  # thread_id: applicant_id
-
-from discord.ui import Button, View
-
-@bot.tree.command(name="new_vacancy", description="Post a new job vacancy")
-async def new_vacancy(interaction: discord.Interaction):
-    if RECRUITMENT_ROLE_ID not in [role.id for role in interaction.user.roles]:
-        await interaction.response.send_message("You do not have permission.", ephemeral=True)
-        return
-
-    await interaction.response.send_message("Please check your DMs to provide vacancy details.", ephemeral=True)
-    dm_channel = await interaction.user.create_dm()
-    fields = ["Vacancy Name", "Job Description", "Manager", "Requirements"]
-    responses = {}
-    def check(m):
-        return m.author == interaction.user and isinstance(m.channel, discord.DMChannel)
-    for field in fields:
-        await dm_channel.send(f"Enter {field}:")
-        try:
-            msg = await bot.wait_for("message", check=check, timeout=300)
-            responses[field] = msg.content
-        except:
-            await dm_channel.send("Timeout. Vacancy creation cancelled.")
-            return
-
-    careers_channel = bot.get_channel(CAREERS_CHANNEL_ID)
-    if not careers_channel:
-        await dm_channel.send("Careers channel not found.")
-        return
-
-    embed = discord.Embed(
-        title=responses["Vacancy Name"],
-        description=responses["Job Description"],
-        color=0x1E90FF  # nicer blue
-    )
-    embed.add_field(name="Manager", value=responses["Manager"], inline=True)
-    embed.add_field(name="Requirements", value=responses["Requirements"], inline=False)
-
-    button = Button(label="Apply", style=discord.ButtonStyle.primary)
-    async def button_callback(interaction_button: discord.Interaction):
-        applicant = interaction_button.user
-        thread = await careers_channel.create_thread(
-            name=f"{responses['Vacancy Name']} - {applicant.name}",
-            type=discord.ChannelType.private_thread,
-            reason="New vacancy application"
-        )
-        await thread.send(f"Hello {applicant.name}, please send your CV (PDF, DOCX, or viewable link).")
-        await thread.add_user(applicant)
-        hr_role = interaction_button.guild.get_role(RECRUITMENT_ROLE_ID)
-        for member in hr_role.members:
-            await thread.add_user(member)
-        ticket_threads[thread.id] = applicant.id
-        await interaction_button.response.send_message(f"Ticket created: {thread.mention}", ephemeral=True)
-
-    button.callback = button_callback
-    view = View()
-    view.add_item(button)
-
-    await careers_channel.send(embed=embed, view=view)
-    await dm_channel.send(f"Vacancy posted successfully in {careers_channel.mention}.")
-
-@bot.tree.command(name="close", description="Close a vacancy ticket")
-@app_commands.describe(thread_id="Thread ID to close")
-async def close_ticket(interaction: discord.Interaction, thread_id: str):
-    if RECRUITMENT_ROLE_ID not in [role.id for role in interaction.user.roles]:
-        await interaction.response.send_message("You do not have permission.", ephemeral=True)
-        return
-
-    try:
-        thread_id_int = int(thread_id)
-    except:
-        await interaction.response.send_message("Invalid thread ID.", ephemeral=True)
-        return
-
-    if thread_id_int not in ticket_threads:
-        await interaction.response.send_message("Ticket not found.", ephemeral=True)
-        return
-
-    thread = bot.get_channel(thread_id_int)
-    applicant_id = ticket_threads[thread_id_int]
-    applicant = await bot.fetch_user(applicant_id)
-
-    if thread:
-        await thread.send("This ticket is now closed.")
-        await thread.edit(locked=True, archived=True)
-    if applicant:
-        dm = await applicant.create_dm()
-        await dm.send("Your HR ticket has been closed.")
-
-    del ticket_threads[thread_id_int]
-    await interaction.response.send_message("Ticket closed successfully.", ephemeral=True)
-
-# ---------------------------
-# Run both Bot + FastAPI
+# Run Bot + FastAPI
 # ---------------------------
 threading.Thread(target=run_api, daemon=True).start()
 bot.run(os.environ['DISCORD_TOKEN'])
