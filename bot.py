@@ -38,21 +38,7 @@ def save_template(template_name, file_path, fields):
         json.dump(templates, f, indent=4)
 
 # ---------------------------
-# FastAPI setup to serve files
-# ---------------------------
-app = FastAPI()
-app.mount("/generated", StaticFiles(directory="generated"), name="generated")
-
-# Railway will provide a public domain
-BASE_URL = os.environ.get("RAILWAY_PUBLIC_DOMAIN", "http://localhost:8000")
-if not BASE_URL.startswith("http"):
-    BASE_URL = f"https://{BASE_URL}"
-
-def run_api():
-    uvicorn.run(app, host="0.0.0.0", port=int(os.environ.get("PORT", 8000)))
-
-# ---------------------------
-# Discord Bot Setup
+# Bot Setup
 # ---------------------------
 intents = discord.Intents.default()
 intents.message_content = True
@@ -107,9 +93,7 @@ async def add_template(interaction: discord.Interaction):
     fields = extract_fields(file_path)
     save_template(template_name, file_path, fields)
 
-    # Send viewable link to the uploaded template
-    file_url = f"{BASE_URL}/generated/{file.filename}"
-    await interaction.followup.send(f"Template '{template_name}' added with fields: {fields}\nViewable link: {file_url}")
+    await interaction.followup.send(f"Template '{template_name}' added with fields: {fields}")
 
 @bot.tree.command(name="generate_document", description="Generate a document from a template")
 @app_commands.describe(template_name="Name of the template to use")
@@ -148,18 +132,30 @@ async def generate_document(interaction: discord.Interaction, template_name: str
             await dm_channel.send("Timeout or error waiting for input.")
             return
 
-    # Generate filled-in DOCX
+    # Generate DOCX
     doc = DocxTemplate(templates[template_name]["file_path"])
     doc.render(responses)
     output_docx = f"generated/{interaction.user.id}_{template_name}.docx"
     doc.save(output_docx)
 
-    # Send viewable link to the generated DOCX
-    file_url = f"{BASE_URL}/generated/{os.path.basename(output_docx)}"
-    await dm_channel.send(f"Here is your completed document: {file_url}")
+    # Make viewable link via Office Online
+    view_url = f"https://view.officeapps.live.com/op/embed.aspx?src={BASE_URL}/generated/{os.path.basename(output_docx)}"
+    await dm_channel.send(f"Here is your document (viewable in browser): {view_url}")
 
 # ---------------------------
-# Run API + Bot
+# FastAPI App
+# ---------------------------
+app = FastAPI()
+app.mount("/generated", StaticFiles(directory="generated"), name="generated")
+
+# Railway will give you a public URL like https://your-app-name.up.railway.app
+BASE_URL = os.environ.get("RAILWAY_PUBLIC_DOMAIN", "http://localhost:8000")
+
+def run_api():
+    uvicorn.run(app, host="0.0.0.0", port=int(os.environ.get("PORT", 8000)))
+
+# ---------------------------
+# Run both Bot + FastAPI
 # ---------------------------
 threading.Thread(target=run_api, daemon=True).start()
 bot.run(os.environ['DISCORD_TOKEN'])
