@@ -6,7 +6,8 @@ from docx import Document
 from docxtpl import DocxTemplate
 import json
 import re
-from docx2pdf import convert
+import subprocess
+import platform
 
 # ---------------------------
 # Setup folders and templates
@@ -40,6 +41,29 @@ def save_template(template_name, file_path, fields):
         json.dump(templates, f, indent=4)
     print(f"Template {template_name} saved successfully")
 
+def convert_to_pdf(input_path, output_path):
+    system = platform.system()
+    print(f"Converting to PDF on {system}")
+    try:
+        if system == "Windows" or system == "Darwin":
+            # Use docx2pdf on Windows/macOS
+            from docx2pdf import convert
+            convert(input_path, output_path)
+        else:
+            # Use LibreOffice CLI on Linux
+            subprocess.run([
+                "libreoffice",
+                "--headless",
+                "--convert-to", "pdf",
+                "--outdir", os.path.dirname(output_path),
+                input_path
+            ], check=True)
+        print(f"PDF conversion successful: {output_path}")
+        return True
+    except Exception as e:
+        print(f"Error converting to PDF: {e}")
+        return False
+
 # ---------------------------
 # Bot Setup
 # ---------------------------
@@ -49,11 +73,8 @@ intents.message_content = True
 class MyBot(commands.Bot):
     def __init__(self):
         super().__init__(command_prefix="!", intents=intents)
-        # DO NOT create a new CommandTree
-        # self.tree already exists
 
     async def setup_hook(self):
-        # Sync commands before bot connects
         await self.tree.sync()
         print("Slash commands synced!")
 
@@ -156,12 +177,8 @@ async def generate_document(interaction: discord.Interaction, template_name: str
 
     # Convert to PDF
     pdf_path = output_path.replace(".docx", ".pdf")
-    try:
-        convert(output_path, pdf_path)
-        print(f"Converted DOCX to PDF at {pdf_path}")
-    except Exception as e:
-        print(f"Error converting to PDF: {e}")
-        await dm_channel.send("Error converting document to PDF.")
+    if not convert_to_pdf(output_path, pdf_path):
+        await dm_channel.send("Error converting document to PDF. PDF not generated.")
         return
 
     await dm_channel.send("Here is your completed document:", file=discord.File(pdf_path))
