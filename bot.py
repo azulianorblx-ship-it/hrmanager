@@ -57,6 +57,7 @@ bot = MyBot()
 @bot.event
 async def on_ready():
     print(f"Logged in as {bot.user}")
+    await bot.change_presence(activity=discord.Game(name="Crown & Cabinet"))
 
 # ---------------------------
 # DOCX Commands
@@ -186,11 +187,10 @@ async def new_vacancy(interaction: discord.Interaction):
             reason="New vacancy application"
         )
         await thread.send(f"Hello {applicant.name}, please send your CV (PDF, DOCX, or viewable link).")
-        # Give HR role access
-        hr_role = interaction.guild.get_role(RECRUITMENT_ROLE_ID)
-        await thread.edit(locked=False, archived=False)
         await thread.add_user(applicant)
-        await thread.add_user(hr_role)
+        hr_role = interaction_button.guild.get_role(RECRUITMENT_ROLE_ID)
+        for member in hr_role.members:
+            await thread.add_user(member)
         ticket_threads[thread.id] = applicant.id
         await interaction_button.response.send_message(f"Ticket created: {thread.mention}", ephemeral=True)
 
@@ -221,12 +221,14 @@ async def close_ticket(interaction: discord.Interaction, thread_id: str):
     thread = bot.get_channel(thread_id_int)
     applicant_id = ticket_threads[thread_id_int]
     applicant = await bot.fetch_user(applicant_id)
+
     if thread:
         await thread.send("This ticket is now closed.")
         await thread.edit(locked=True, archived=True)
     if applicant:
         dm = await applicant.create_dm()
         await dm.send("Your HR ticket has been closed.")
+
     del ticket_threads[thread_id_int]
     await interaction.response.send_message("Ticket closed successfully.", ephemeral=True)
 
