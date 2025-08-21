@@ -49,15 +49,19 @@ intents.message_content = True
 class MyBot(commands.Bot):
     def __init__(self):
         super().__init__(command_prefix="!", intents=intents)
-        self.tree = app_commands.CommandTree(self)
+        # DO NOT create a new CommandTree
+        # self.tree already exists
+
+    async def setup_hook(self):
+        # Sync commands before bot connects
+        await self.tree.sync()
+        print("Slash commands synced!")
 
 bot = MyBot()
 
 @bot.event
 async def on_ready():
-    await bot.tree.sync()
     print(f"Logged in as {bot.user}")
-    print("Slash commands synced!")
 
 # ---------------------------
 # Slash Commands
@@ -81,7 +85,11 @@ async def add_template(interaction: discord.Interaction):
     await interaction.followup.send("What should the template name be?")
     
     try:
-        name_msg = await bot.wait_for("message", check=lambda m: m.author == interaction.user and m.channel == interaction.channel, timeout=60)
+        name_msg = await bot.wait_for(
+            "message",
+            check=lambda m: m.author == interaction.user and m.channel == interaction.channel,
+            timeout=60
+        )
     except Exception as e:
         await interaction.followup.send("Timeout or error waiting for template name.")
         print(f"Error waiting for template name: {e}")
@@ -101,7 +109,9 @@ async def add_template(interaction: discord.Interaction):
 @app_commands.describe(template_name="Name of the template to use")
 async def generate_document(interaction: discord.Interaction, template_name: str):
     print(f"/generate_document called by {interaction.user} for template {template_name}")
-    await interaction.response.send_message(f"Generating document for template '{template_name}'. Check your DMs!", ephemeral=True)
+    await interaction.response.send_message(
+        f"Generating document for template '{template_name}'. Check your DMs!", ephemeral=True
+    )
 
     with open("templates.json", "r") as f:
         templates = json.load(f)
@@ -119,7 +129,9 @@ async def generate_document(interaction: discord.Interaction, template_name: str
         await dm_channel.send(f"Please provide the following fields: {fields}")
     except Exception as e:
         print(f"Error creating DM: {e}")
-        await interaction.followup.send("Cannot send you a DM. Please check your privacy settings.", ephemeral=True)
+        await interaction.followup.send(
+            "Cannot send you a DM. Please check your privacy settings.", ephemeral=True
+        )
         return
 
     responses = {}
