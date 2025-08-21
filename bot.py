@@ -10,6 +10,7 @@ import threading
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 import uvicorn
+from discord.ui import Button, View
 
 # ---------------------------
 # Setup folders and templates
@@ -48,7 +49,7 @@ class MyBot(commands.Bot):
         super().__init__(command_prefix="!", intents=intents)
 
     async def setup_hook(self):
-        await self.tree.sync(guild=discord.Object(id=int(os.environ['GUILD_ID'])))  # sync to your guild for instant registration
+        await self.tree.sync()
         print("Slash commands synced!")
 
 bot = MyBot()
@@ -58,7 +59,7 @@ async def on_ready():
     print(f"Logged in as {bot.user}")
 
 # ---------------------------
-# Slash Commands
+# DOCX Commands
 # ---------------------------
 @bot.tree.command(name="add_template", description="Add a new DOCX template")
 async def add_template(interaction: discord.Interaction):
@@ -139,7 +140,6 @@ async def generate_document(interaction: discord.Interaction, template_name: str
     doc.save(output_docx)
 
     # Make viewable link via Office Online
-    BASE_URL = os.environ.get("RAILWAY_PUBLIC_DOMAIN", "http://localhost:8000")
     view_url = f"https://view.officeapps.live.com/op/embed.aspx?src={BASE_URL}/generated/{os.path.basename(output_docx)}"
     await dm_channel.send(f"Here is your document (viewable in browser): {view_url}")
 
@@ -149,65 +149,84 @@ async def generate_document(interaction: discord.Interaction, template_name: str
 app = FastAPI()
 app.mount("/generated", StaticFiles(directory="generated"), name="generated")
 
+BASE_URL = os.environ.get("RAILWAY_PUBLIC_DOMAIN", "http://localhost:8000")
+
 def run_api():
     uvicorn.run(app, host="0.0.0.0", port=int(os.environ.get("PORT", 8000)))
 
 # ---------------------------
 # Vacancy/HR Commands
 # ---------------------------
-vacancy_tickets = {}  # {ticket_message_id: {"user_id": ..., "channel_id": ...}}
+vacancy_tickets = {}  # {ticket_message_id: {"user_id": ..., "cv_link": ...}}
 
 RECRUITMENT_ROLE_ID = 1407614964214267934
 CAREERS_CHANNEL_ID = 1405613279648153743
 
-from discord.ui import Button, View
-
 @bot.tree.command(name="new_vacancy", description="Post a new job vacancy")
-@app_commands.guilds(discord.Object(id=int(os.environ['GUILD_ID'])))
 async def new_vacancy(interaction: discord.Interaction):
     if RECRUITMENT_ROLE_ID not in [role.id for role in interaction.user.roles]:
         await interaction.response.send_message("You do not have permission.", ephemeral=True)
         return
 
-    await interaction.response.send_message("Please check your DMs to fill vacancy details.", ephemeral=True)
-    dm_channel = await interaction.user.create_dm()
+    await interaction.response.send_message("Please check your DMs to provide vacancy details.", ephemeral=True)
+    dm = await interaction.user.create_dm()
 
-    responses = {}
     fields = ["vacancy_name", "job_description", "manager", "requirements"]
-    def check(m): return m.author == interaction.user and isinstance(m.channel, discord.DMChannel)
+    responses = {}
+
+    def check(m):
+        return m.author == interaction.user and isinstance(m.channel, discord.DMChannel)
 
     for field in fields:
-        await dm_channel.send(f"Enter {field.replace('_',' ').title()}:")
+        await dm.send(f"Enter {field.replace('_',' ').title()}:")
         try:
             msg = await bot.wait_for("message", check=check, timeout=300)
             responses[field] = msg.content
         except:
-            await dm_channel.send("Timeout. Vacancy creation cancelled.")
+            await dm.send("Timeout. Vacancy creation cancelled.")
             return
 
     careers_channel = bot.get_channel(CAREERS_CHANNEL_ID)
     if not careers_channel:
-        await dm_channel.send("Careers channel not found.")
+        await dm.send("Careers channel not found.")
         return
 
-    # Create Apply button
+    # Create "Apply" button
     button = Button(label="Apply", style=discord.ButtonStyle.primary)
-    async def button_callback(interaction_button: discord.Interaction):
+    async def apply_callback(interaction_button: discord.Interaction):
         applicant = interaction_button.user
-        ticket_dm = await applicant.create_dm()
-        await ticket_dm.send("Hello! Please send your CV (PDF, DOCX, or viewable link).")
-        vacancy_tickets[ticket_dm.id] = {"user_id": applicant.id, "channel_id": ticket_dm.id}
+        applicant_dm = await applicant.create_dm()
+        await applicant_dm.send(f"Hello {applicant.name}, please send a copy of your CV (PDF, DOCX, or viewable link).")
+
+        def cv_check(m):
+            return m.author == applicant and isinstance(m.channel, discord.DMChannel)
+
+        try:
+            msg = await bot.wait_for("message", check=cv_check, timeout=900)
+            cv_link = msg.attachments[0].url if msg.attachments else msg.content
+            vacancy_tickets[interaction_button.message.id] = {"user_id": applicant.id, "cv_link": cv_link}
+            await applicant_dm.send(f"Your CV has been submitted: {cv_link}")
+        except:
+            await applicant_dm.send("Timeout. CV not submitted.")
+
         await interaction_button.response.send_message("HR will review your CV.", ephemeral=True)
-    button.callback = button_callback
+
+    button.callback = apply_callback
     view = View()
     view.add_item(button)
 
-    embed = discord.Embed(title=responses["vacancy_name"], description=responses["job_description"], color=0x00ff00)
+    embed = discord.Embed(
+        title=responses["vacancy_name"],
+        description=responses["job_description"],
+        color=0x2ecc71  # softer green
+    )
     embed.add_field(name="Manager", value=responses["manager"], inline=True)
     embed.add_field(name="Requirements", value=responses["requirements"], inline=False)
-    await careers_channel.send(embed=embed, view=view)
-    await dm_channel.send(f"Vacancy posted successfully in {careers_channel.mention}.")
 
+    await careers_channel.send(embed=embed, view=view)
+    await dm.send(f"Vacancy posted in {careers_channel.mention} successfully.")
+
+# Close ticket command
 @bot.tree.command(name="close", description="Close a vacancy ticket")
 @app_commands.describe(ticket_id="Ticket message ID to close")
 async def close_ticket(interaction: discord.Interaction, ticket_id: str):
@@ -221,10 +240,11 @@ async def close_ticket(interaction: discord.Interaction, ticket_id: str):
         return
 
     user_id = vacancy_tickets[ticket_id_int]["user_id"]
+    cv_link = vacancy_tickets[ticket_id_int]["cv_link"]
     user = await bot.fetch_user(user_id)
     if user:
         dm_channel = await user.create_dm()
-        await dm_channel.send("Your HR ticket has been closed.")
+        await dm_channel.send(f"Your HR ticket has been closed. Submitted CV: {cv_link}")
     del vacancy_tickets[ticket_id_int]
     await interaction.response.send_message("Ticket closed successfully.", ephemeral=True)
 
