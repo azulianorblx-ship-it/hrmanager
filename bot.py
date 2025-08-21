@@ -48,7 +48,7 @@ class MyBot(commands.Bot):
         super().__init__(command_prefix="!", intents=intents)
 
     async def setup_hook(self):
-        await self.tree.sync()
+        await self.tree.sync(guild=discord.Object(id=int(os.environ['GUILD_ID'])))  # sync to your guild for instant registration
         print("Slash commands synced!")
 
 bot = MyBot()
@@ -139,6 +139,7 @@ async def generate_document(interaction: discord.Interaction, template_name: str
     doc.save(output_docx)
 
     # Make viewable link via Office Online
+    BASE_URL = os.environ.get("RAILWAY_PUBLIC_DOMAIN", "http://localhost:8000")
     view_url = f"https://view.officeapps.live.com/op/embed.aspx?src={BASE_URL}/generated/{os.path.basename(output_docx)}"
     await dm_channel.send(f"Here is your document (viewable in browser): {view_url}")
 
@@ -148,12 +149,8 @@ async def generate_document(interaction: discord.Interaction, template_name: str
 app = FastAPI()
 app.mount("/generated", StaticFiles(directory="generated"), name="generated")
 
-# Railway will give you a public URL like https://your-app-name.up.railway.app
-BASE_URL = os.environ.get("RAILWAY_PUBLIC_DOMAIN", "http://localhost:8000")
-
 def run_api():
     uvicorn.run(app, host="0.0.0.0", port=int(os.environ.get("PORT", 8000)))
-
 
 # ---------------------------
 # Vacancy/HR Commands
@@ -166,21 +163,19 @@ CAREERS_CHANNEL_ID = 1405613279648153743
 from discord.ui import Button, View
 
 @bot.tree.command(name="new_vacancy", description="Post a new job vacancy")
+@app_commands.guilds(discord.Object(id=int(os.environ['GUILD_ID'])))
 async def new_vacancy(interaction: discord.Interaction):
-    # Only recruitment team can use
     if RECRUITMENT_ROLE_ID not in [role.id for role in interaction.user.roles]:
         await interaction.response.send_message("You do not have permission.", ephemeral=True)
         return
 
-    await interaction.response.send_message("Please provide the vacancy name:", ephemeral=True)
-    
-    def check(m):
-        return m.author == interaction.user and isinstance(m.channel, discord.DMChannel)
-    
-    # Collect fields from DM
+    await interaction.response.send_message("Please check your DMs to fill vacancy details.", ephemeral=True)
+    dm_channel = await interaction.user.create_dm()
+
     responses = {}
     fields = ["vacancy_name", "job_description", "manager", "requirements"]
-    dm_channel = await interaction.user.create_dm()
+    def check(m): return m.author == interaction.user and isinstance(m.channel, discord.DMChannel)
+
     for field in fields:
         await dm_channel.send(f"Enter {field.replace('_',' ').title()}:")
         try:
@@ -195,31 +190,24 @@ async def new_vacancy(interaction: discord.Interaction):
         await dm_channel.send("Careers channel not found.")
         return
 
-    # Create the "Apply" button
+    # Create Apply button
     button = Button(label="Apply", style=discord.ButtonStyle.primary)
     async def button_callback(interaction_button: discord.Interaction):
         applicant = interaction_button.user
-        ticket_msg = await applicant.create_dm()
-        await ticket_msg.send(f"Hello {applicant.name}, please send a copy of your CV (PDF, DOCX, or viewable link).")
-        # Save ticket info
-        vacancy_tickets[ticket_msg.id] = {
-            "user_id": applicant.id,
-            "channel_id": ticket_msg.id
-        }
+        ticket_dm = await applicant.create_dm()
+        await ticket_dm.send("Hello! Please send your CV (PDF, DOCX, or viewable link).")
+        vacancy_tickets[ticket_dm.id] = {"user_id": applicant.id, "channel_id": ticket_dm.id}
         await interaction_button.response.send_message("HR will review your CV.", ephemeral=True)
-
     button.callback = button_callback
     view = View()
     view.add_item(button)
 
-    # Post vacancy
     embed = discord.Embed(title=responses["vacancy_name"], description=responses["job_description"], color=0x00ff00)
     embed.add_field(name="Manager", value=responses["manager"], inline=True)
     embed.add_field(name="Requirements", value=responses["requirements"], inline=False)
-    post_msg = await careers_channel.send(embed=embed, view=view)
-    await dm_channel.send(f"Vacancy posted in {careers_channel.mention} successfully.")
+    await careers_channel.send(embed=embed, view=view)
+    await dm_channel.send(f"Vacancy posted successfully in {careers_channel.mention}.")
 
-# Close ticket command
 @bot.tree.command(name="close", description="Close a vacancy ticket")
 @app_commands.describe(ticket_id="Ticket message ID to close")
 async def close_ticket(interaction: discord.Interaction, ticket_id: str):
@@ -233,7 +221,6 @@ async def close_ticket(interaction: discord.Interaction, ticket_id: str):
         return
 
     user_id = vacancy_tickets[ticket_id_int]["user_id"]
-    channel_id = vacancy_tickets[ticket_id_int]["channel_id"]
     user = await bot.fetch_user(user_id)
     if user:
         dm_channel = await user.create_dm()
@@ -244,7 +231,5 @@ async def close_ticket(interaction: discord.Interaction, ticket_id: str):
 # ---------------------------
 # Run both Bot + FastAPI
 # ---------------------------
-
 threading.Thread(target=run_api, daemon=True).start()
 bot.run(os.environ['DISCORD_TOKEN'])
-
