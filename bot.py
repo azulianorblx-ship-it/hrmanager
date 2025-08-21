@@ -1,19 +1,18 @@
 import os
-import re
-import json
-import urllib.parse
+import discord
 from discord.ext import commands
 from discord import app_commands
-import discord
 from docxtpl import DocxTemplate
 from docx import Document
+import json
+import re
+import threading
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 import uvicorn
-import threading
 
 # ---------------------------
-# Folders
+# Setup folders and templates
 # ---------------------------
 os.makedirs("templates", exist_ok=True)
 os.makedirs("generated", exist_ok=True)
@@ -39,29 +38,41 @@ def save_template(template_name, file_path, fields):
         json.dump(templates, f, indent=4)
 
 # ---------------------------
-# FastAPI App (serve files)
+# FastAPI setup to serve files
 # ---------------------------
 app = FastAPI()
-app.mount("/templates", StaticFiles(directory="templates"), name="templates")
 app.mount("/generated", StaticFiles(directory="generated"), name="generated")
 
-# Railway public URL
+# Railway will provide a public domain
 BASE_URL = os.environ.get("RAILWAY_PUBLIC_DOMAIN", "http://localhost:8000")
+if not BASE_URL.startswith("http"):
+    BASE_URL = f"https://{BASE_URL}"
 
 def run_api():
     uvicorn.run(app, host="0.0.0.0", port=int(os.environ.get("PORT", 8000)))
 
-threading.Thread(target=run_api, daemon=True).start()
-
 # ---------------------------
-# Discord Bot
+# Discord Bot Setup
 # ---------------------------
 intents = discord.Intents.default()
 intents.message_content = True
-bot = commands.Bot(command_prefix="!", intents=intents)
+
+class MyBot(commands.Bot):
+    def __init__(self):
+        super().__init__(command_prefix="!", intents=intents)
+
+    async def setup_hook(self):
+        await self.tree.sync()
+        print("Slash commands synced!")
+
+bot = MyBot()
+
+@bot.event
+async def on_ready():
+    print(f"Logged in as {bot.user}")
 
 # ---------------------------
-# Commands
+# Slash Commands
 # ---------------------------
 @bot.tree.command(name="add_template", description="Add a new DOCX template")
 async def add_template(interaction: discord.Interaction):
@@ -96,14 +107,9 @@ async def add_template(interaction: discord.Interaction):
     fields = extract_fields(file_path)
     save_template(template_name, file_path, fields)
 
-    # View-only link
-    file_url = f"{BASE_URL}/templates/{urllib.parse.quote(file.filename)}"
-    view_only_link = f"https://view.officeapps.live.com/op/embed.aspx?src={urllib.parse.quote(file_url)}"
-
-    await interaction.followup.send(
-        f"Template '{template_name}' added with fields: {fields}\n"
-        f"View-only link: {view_only_link}"
-    )
+    # Send viewable link to the uploaded template
+    file_url = f"{BASE_URL}/generated/{file.filename}"
+    await interaction.followup.send(f"Template '{template_name}' added with fields: {fields}\nViewable link: {file_url}")
 
 @bot.tree.command(name="generate_document", description="Generate a document from a template")
 @app_commands.describe(template_name="Name of the template to use")
@@ -125,7 +131,9 @@ async def generate_document(interaction: discord.Interaction, template_name: str
         dm_channel = await interaction.user.create_dm()
         await dm_channel.send(f"Please provide the following fields: {fields}")
     except:
-        await interaction.followup.send("Cannot DM you. Please check privacy settings.", ephemeral=True)
+        await interaction.followup.send(
+            "Cannot DM you. Please check privacy settings.", ephemeral=True
+        )
         return
 
     responses = {}
@@ -140,24 +148,18 @@ async def generate_document(interaction: discord.Interaction, template_name: str
             await dm_channel.send("Timeout or error waiting for input.")
             return
 
+    # Generate filled-in DOCX
     doc = DocxTemplate(templates[template_name]["file_path"])
     doc.render(responses)
     output_docx = f"generated/{interaction.user.id}_{template_name}.docx"
     doc.save(output_docx)
 
-    file_url = f"{BASE_URL}/generated/{urllib.parse.quote(os.path.basename(output_docx))}"
+    # Send viewable link to the generated DOCX
+    file_url = f"{BASE_URL}/generated/{os.path.basename(output_docx)}"
     await dm_channel.send(f"Here is your completed document: {file_url}")
 
 # ---------------------------
-# Events
+# Run API + Bot
 # ---------------------------
-@bot.event
-async def on_ready():
-    print(f"Logged in as {bot.user}")
-    await bot.tree.sync()
-    print("Slash commands synced!")
-
-# ---------------------------
-# Run Bot
-# ---------------------------
+threading.Thread(target=run_api, daemon=True).start()
 bot.run(os.environ['DISCORD_TOKEN'])
