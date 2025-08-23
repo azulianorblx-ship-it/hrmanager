@@ -52,6 +52,9 @@ def save_dm_template(template_name, content, fields):
 
 BASE_URL = os.environ.get("RAILWAY_PUBLIC_DOMAIN", "http://localhost:8000")
 
+LOG_CHANNEL_ID = 1408784982205534239
+DARK_BLUE = discord.Color.from_rgb(20, 40, 120)  # darker blue
+
 # ---------------------------
 # Bot Setup
 # ---------------------------
@@ -75,184 +78,44 @@ async def on_ready():
     await bot.change_presence(activity=discord.Game(name="Crown & Cabinet"))
 
 # ---------------------------
-# DOCX Commands
+# Announcement Buttons
 # ---------------------------
-@bot.tree.command(name="add_template", description="Add a new DOCX template")
-async def add_template(interaction: discord.Interaction):
-    await interaction.response.send_message("Upload your DOCX template as a reply in this channel.")
+class AnnouncementView(discord.ui.View):
+    def __init__(self, user, embed, channel, webhook_url=None):
+        super().__init__(timeout=None)
+        self.user = user
+        self.embed = embed
+        self.channel = channel
+        self.webhook_url = webhook_url
 
-    def check(msg):
-        return msg.author == interaction.user and msg.attachments and msg.channel == interaction.channel
-
-    try:
-        msg = await bot.wait_for("message", check=check, timeout=120)
-    except:
-        await interaction.followup.send("Timeout or error waiting for file.")
-        return
-
-    file = msg.attachments[0]
-    await interaction.followup.send("What should the template name be?")
-
-    try:
-        name_msg = await bot.wait_for(
-            "message",
-            check=lambda m: m.author == interaction.user and m.channel == interaction.channel,
-            timeout=60
-        )
-    except:
-        await interaction.followup.send("Timeout or error waiting for template name.")
-        return
-
-    template_name = name_msg.content
-    file_path = f"templates/{file.filename}"
-    await file.save(file_path)
-    fields = extract_fields(file_path)
-    save_template(template_name, file_path, fields)
-    await interaction.followup.send(f"Template '{template_name}' added with fields: {fields}")
-
-@bot.tree.command(name="generate_document", description="Generate a document from a template")
-@app_commands.describe(template_name="Name of the template to use")
-async def generate_document(interaction: discord.Interaction, template_name: str):
-    await interaction.response.send_message(f"Generating document for template '{template_name}'. Check your DMs!", ephemeral=True)
-
-    with open("templates.json", "r") as f:
-        templates = json.load(f)
-    if template_name not in templates:
-        await interaction.followup.send("Template not found.", ephemeral=True)
-        return
-
-    fields = templates[template_name]["fields"]
-    try:
-        dm_channel = await interaction.user.create_dm()
-        await dm_channel.send(f"Please provide the following fields: {fields}")
-    except:
-        await interaction.followup.send("Cannot DM you. Check privacy settings.", ephemeral=True)
-        return
-
-    responses = {}
-    def dm_check(m):
-        return m.author == interaction.user and isinstance(m.channel, discord.DMChannel)
-
-    for field in fields:
-        await dm_channel.send(f"Enter value for {field}:")
-        try:
-            msg = await bot.wait_for("message", check=dm_check, timeout=300)
-            responses[field] = msg.content
-        except asyncio.TimeoutError:
-            await dm_channel.send("Timeout waiting for input.")
+    @discord.ui.button(label="Accept", style=discord.ButtonStyle.green)
+    async def accept(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user != self.user:
+            await interaction.response.send_message("You can't approve this!", ephemeral=True)
             return
 
-    doc = DocxTemplate(templates[template_name]["file_path"])
-    doc.render(responses)
-    output_docx = f"generated/{interaction.user.id}_{template_name}.docx"
-    doc.save(output_docx)
+        await self.channel.send(content="@everyone", embed=self.embed)
+        log_channel = interaction.guild.get_channel(LOG_CHANNEL_ID)
+        if log_channel:
+            await log_channel.send(f"✅ Announcement approved by {self.user} and posted in {self.channel.mention}.")
 
-    view_url = f"https://view.officeapps.live.com/op/embed.aspx?src={BASE_URL}/generated/{os.path.basename(output_docx)}"
-    await dm_channel.send(f"Here is your document (viewable in browser): {view_url}")
+        await interaction.response.edit_message(content="Announcement posted successfully!", view=None)
 
-# ---------------------------
-# DM Template Commands
-# ---------------------------
-@bot.tree.command(name="create_dm_template", description="Create a new DM template")
-async def create_dm_template(interaction: discord.Interaction):
-    await interaction.response.send_message("Please check your DMs to create a new DM template.", ephemeral=True)
-    dm_channel = await interaction.user.create_dm()
-    await dm_channel.send("Send the content of the DM template. Use {{field}} placeholders for variables.")
-
-    def check(m):
-        return m.author == interaction.user and isinstance(m.channel, discord.DMChannel)
-
-    try:
-        msg = await bot.wait_for("message", check=check, timeout=600)
-        content = msg.content
-        fields = list(set(re.findall(r"\{\{(.*?)\}\}", content)))
-        await dm_channel.send("What should the template name be?")
-        name_msg = await bot.wait_for("message", check=check, timeout=120)
-        template_name = name_msg.content
-        save_dm_template(template_name, content, fields)
-        await dm_channel.send(f"DM template '{template_name}' saved with fields: {fields}")
-    except asyncio.TimeoutError:
-        await dm_channel.send("Timeout. Template creation cancelled.")
-
-@bot.tree.command(name="list_dm_templates", description="List all DM templates")
-async def list_dm_templates(interaction: discord.Interaction):
-    with open("dm_templates.json", "r") as f:
-        templates = json.load(f)
-    if not templates:
-        await interaction.response.send_message("No DM templates found.", ephemeral=True)
-        return
-    await interaction.response.send_message(f"DM Templates:\n" + "\n".join(templates.keys()), ephemeral=True)
-
-@bot.tree.command(name="list_generated_templates", description="List all generated DOCX templates")
-async def list_generated_templates(interaction: discord.Interaction):
-    with open("templates.json", "r") as f:
-        templates = json.load(f)
-    if not templates:
-        await interaction.response.send_message("No DOCX templates found.", ephemeral=True)
-        return
-    await interaction.response.send_message(f"DOCX Templates:\n" + "\n".join(templates.keys()), ephemeral=True)
-
-@bot.tree.command(name="dm", description="Send a DM to a user, optionally using a template")
-@app_commands.describe(user="Target user", template="Template name (optional)")
-async def dm_user(interaction: discord.Interaction, user: discord.User, template: str = None):
-    dm_channel = await user.create_dm()
-    def check(m):
-        return m.author == interaction.user and isinstance(m.channel, discord.DMChannel)
-
-    if template:
-        with open("dm_templates.json", "r") as f:
-            templates = json.load(f)
-        if template not in templates:
-            await interaction.response.send_message("Template not found.", ephemeral=True)
+    @discord.ui.button(label="Deny", style=discord.ButtonStyle.red)
+    async def deny(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user != self.user:
+            await interaction.response.send_message("You can't deny this!", ephemeral=True)
             return
-        fields = templates[template]["fields"]
-        content = templates[template]["content"]
-        responses = {}
-        try:
-            await interaction.response.send_message(f"Filling template '{template}'. Check DMs.", ephemeral=True)
-            for field in fields:
-                await interaction.user.send(f"Enter value for {field}:")
-                msg = await bot.wait_for("message", check=check, timeout=300)
-                responses[field] = msg.content
-            final_message = content
-            for k, v in responses.items():
-                final_message = final_message.replace(f"{{{{{k}}}}}", v)
-            await dm_channel.send(final_message)
-        except asyncio.TimeoutError:
-            await interaction.user.send("Timeout filling template. DM cancelled.")
-    else:
-        await interaction.response.send_message("Please check your DMs to type your message.", ephemeral=True)
-        try:
-            await interaction.user.send("Enter your DM message to send:")
-            msg = await bot.wait_for("message", check=check, timeout=600)
-            await dm_channel.send(msg.content)
-        except asyncio.TimeoutError:
-            await interaction.user.send("Timeout. DM cancelled.")
+
+        log_channel = interaction.guild.get_channel(LOG_CHANNEL_ID)
+        if log_channel:
+            await log_channel.send(f"❌ Announcement denied by {self.user}. Process cancelled.")
+
+        await interaction.response.edit_message(content="Announcement cancelled.", view=None)
 
 # ---------------------------
-# Announcement Template Commands
+# Announcement Command
 # ---------------------------
-@bot.tree.command(name="update_anntemplate", description="Update the announcement DOCX template")
-async def update_anntemplate(interaction: discord.Interaction):
-    await interaction.response.send_message("Upload your new announcement DOCX template as a reply in this channel.", ephemeral=True)
-
-    def check(msg):
-        return msg.author == interaction.user and msg.attachments and msg.channel == interaction.channel
-
-    try:
-        msg = await bot.wait_for("message", check=check, timeout=120)
-    except asyncio.TimeoutError:
-        await interaction.followup.send("Timeout waiting for file.", ephemeral=True)
-        return
-
-    file = msg.attachments[0]
-    file_path = f"templates/{file.filename}"
-    await file.save(file_path)
-    fields = extract_fields(file_path)
-    save_template("announcement", file_path, fields)
-    await interaction.followup.send(f"Announcement template updated with fields: {fields}", ephemeral=True)
-
-
 @bot.tree.command(name="announcement", description="Send an announcement using the template")
 @app_commands.describe(channel="Announcement channel to post in")
 async def announcement(interaction: discord.Interaction, channel: discord.TextChannel):
@@ -273,7 +136,7 @@ async def announcement(interaction: discord.Interaction, channel: discord.TextCh
         responses = {}
         def dm_check(m):
             return m.author == interaction.user and isinstance(m.channel, discord.DMChannel)
-        
+
         for field in fields:
             await dm_channel.send(f"Enter value for {field}:")
             msg = await bot.wait_for("message", check=dm_check, timeout=300)
@@ -295,16 +158,18 @@ async def announcement(interaction: discord.Interaction, channel: discord.TextCh
     description = f"Please find a letter attached from {full_name}.\n[View Document]({view_url})"
 
     embed = Embed(
-        title=subject,
+        title=f"<:logo:1408785100128387142> {subject}",
         description=description,
-        color=discord.Color.blue(),
+        color=DARK_BLUE,
         timestamp=datetime.utcnow()
     )
     embed.set_footer(text=f"Sent by {full_name}")
 
-    # Send embed with @everyone ping
-    await channel.send(content="@everyone", embed=embed)
-    await interaction.followup.send(f"Announcement sent in {channel.mention}", ephemeral=True)
+    # Send preview DM with Accept/Deny buttons
+    await dm_channel.send("Preview your announcement below. Accept to post, Deny to cancel.", embed=embed, view=AnnouncementView(interaction.user, embed, channel))
+    log_channel = interaction.guild.get_channel(LOG_CHANNEL_ID)
+    if log_channel:
+        await log_channel.send(f"📝 Announcement preview sent to {interaction.user} for {channel.mention}.")
 
 # ---------------------------
 # FastAPI App
