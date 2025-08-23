@@ -4,13 +4,14 @@ import re
 import threading
 import asyncio
 from discord.ext import commands
-from discord import app_commands
+from discord import app_commands, Embed
 from docxtpl import DocxTemplate
 from docx import Document
 import discord
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 import uvicorn
+from datetime import datetime
 
 # ---------------------------
 # Setup folders and files
@@ -227,6 +228,83 @@ async def dm_user(interaction: discord.Interaction, user: discord.User, template
             await dm_channel.send(msg.content)
         except asyncio.TimeoutError:
             await interaction.user.send("Timeout. DM cancelled.")
+
+# ---------------------------
+# Announcement Template Commands
+# ---------------------------
+@bot.tree.command(name="update_anntemplate", description="Update the announcement DOCX template")
+async def update_anntemplate(interaction: discord.Interaction):
+    await interaction.response.send_message("Upload your new announcement DOCX template as a reply in this channel.", ephemeral=True)
+
+    def check(msg):
+        return msg.author == interaction.user and msg.attachments and msg.channel == interaction.channel
+
+    try:
+        msg = await bot.wait_for("message", check=check, timeout=120)
+    except asyncio.TimeoutError:
+        await interaction.followup.send("Timeout waiting for file.", ephemeral=True)
+        return
+
+    file = msg.attachments[0]
+    file_path = f"templates/{file.filename}"
+    await file.save(file_path)
+    fields = extract_fields(file_path)
+    save_template("announcement", file_path, fields)
+    await interaction.followup.send(f"Announcement template updated with fields: {fields}", ephemeral=True)
+
+
+@bot.tree.command(name="announcement", description="Send an announcement using the template")
+@app_commands.describe(channel="Announcement channel to post in")
+async def announcement(interaction: discord.Interaction, channel: discord.TextChannel):
+    await interaction.response.send_message("Filling announcement template. Check your DMs.", ephemeral=True)
+
+    # Load announcement template
+    with open("templates.json", "r") as f:
+        templates = json.load(f)
+    if "announcement" not in templates:
+        await interaction.followup.send("Announcement template not found. Use /update_anntemplate first.", ephemeral=True)
+        return
+
+    fields = templates["announcement"]["fields"]
+
+    # DM user to fill in fields
+    try:
+        dm_channel = await interaction.user.create_dm()
+        responses = {}
+        def dm_check(m):
+            return m.author == interaction.user and isinstance(m.channel, discord.DMChannel)
+        
+        for field in fields:
+            await dm_channel.send(f"Enter value for {field}:")
+            msg = await bot.wait_for("message", check=dm_check, timeout=300)
+            responses[field] = msg.content
+    except asyncio.TimeoutError:
+        await dm_channel.send("Timeout waiting for input. Announcement cancelled.")
+        return
+
+    # Generate DOCX
+    doc = DocxTemplate(templates["announcement"]["file_path"])
+    doc.render(responses)
+    output_docx = f"generated/{interaction.user.id}_announcement.docx"
+    doc.save(output_docx)
+    view_url = f"https://view.officeapps.live.com/op/embed.aspx?src={BASE_URL}/generated/{os.path.basename(output_docx)}"
+
+    # Build embed
+    subject = responses.get("Subject", "Announcement")
+    full_name = responses.get("FullName", interaction.user.name)
+    description = f"Please find a letter attached from {full_name}.\n[View Document]({view_url})"
+
+    embed = Embed(
+        title=subject,
+        description=description,
+        color=discord.Color.blue(),
+        timestamp=datetime.utcnow()
+    )
+    embed.set_footer(text=f"Sent by {full_name}")
+
+    # Send embed with @everyone ping
+    await channel.send(content="@everyone", embed=embed)
+    await interaction.followup.send(f"Announcement sent in {channel.mention}", ephemeral=True)
 
 # ---------------------------
 # FastAPI App
