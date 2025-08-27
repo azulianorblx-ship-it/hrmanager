@@ -51,7 +51,10 @@ def save_dm_template(template_name, content, fields):
         json.dump(templates, f, indent=4)
 
 BASE_URL = os.environ.get("RAILWAY_PUBLIC_DOMAIN", "http://localhost:8000")
-GUILD_ID = int(os.environ.get("GUILD_ID"))
+GUILD_ID = int(os.environ.get("GUILD_ID", 0))
+if not GUILD_ID:
+    raise ValueError("GUILD_ID not set in environment variables")
+
 LOG_CHANNEL_ID = 1408784982205534239
 DARK_BLUE = discord.Color.from_rgb(20, 40, 120)
 
@@ -75,7 +78,10 @@ bot = MyBot()
 async def log_action(bot, message: str):
     channel = bot.get_channel(LOG_CHANNEL_ID)
     if channel:
-        await channel.send(f"📘 **Log:** {message}")
+        try:
+            await channel.send(f"📘 **Log:** {message}")
+        except:
+            print("[WARN] Could not send log message")
 
 @bot.event
 async def on_ready():
@@ -112,7 +118,8 @@ async def add_template(interaction: discord.Interaction):
         return
 
     template_name = name_msg.content
-    file_path = f"templates/{file.filename}"
+    file_ext = os.path.splitext(file.filename)[1]
+    file_path = f"templates/{interaction.user.id}_{int(datetime.now().timestamp())}{file_ext}"
     await file.save(file_path)
     fields = extract_fields(file_path)
     save_template(template_name, file_path, fields)
@@ -207,7 +214,7 @@ def load_embed_templates():
 # ---------------------------
 # Embed Commands
 # ---------------------------
-@bot.tree.command(name="create_embedtemplate", description="Create a new embed template")
+@bot.tree.command(name="create_embedtemplate", description="Create a new embed template", guild=discord.Object(id=GUILD_ID))
 async def create_embedtemplate(interaction: discord.Interaction):
     await interaction.response.send_message("Check your DMs to create a new embed template.", ephemeral=True)
     dm_channel = await interaction.user.create_dm()
@@ -244,6 +251,12 @@ async def create_embedtemplate(interaction: discord.Interaction):
         except:
             color = DARK_BLUE
 
+    # Clean channel_id
+    channel_id = None
+    if responses.get("channel_id"):
+        digits = re.sub(r"\\D", "", responses["channel_id"])
+        channel_id = int(digits) if digits else None
+
     data = {
         "title": responses["title"],
         "description": responses["description"],
@@ -251,7 +264,7 @@ async def create_embedtemplate(interaction: discord.Interaction):
         "color": color.value,
         "image_url": responses.get("image_url", ""),
         "thumbnail_url": responses.get("thumbnail_url", ""),
-        "channel_id": int(responses["channel_id"]) if responses.get("channel_id") else None,
+        "channel_id": channel_id,
         "ping": responses.get("ping", "none")
     }
 
@@ -261,7 +274,7 @@ async def create_embedtemplate(interaction: discord.Interaction):
     if log_channel:
         await log_channel.send(f"📦 {interaction.user} created embed template '{responses['name']}'.")
 
-@bot.tree.command(name="list_embedtemplates", description="List all saved embed templates")
+@bot.tree.command(name="list_embedtemplates", description="List all saved embed templates", guild=discord.Object(id=GUILD_ID))
 async def list_embedtemplates(interaction: discord.Interaction):
     templates = load_embed_templates()
     if not templates:
@@ -269,7 +282,7 @@ async def list_embedtemplates(interaction: discord.Interaction):
         return
     await interaction.response.send_message("📑 Embed Templates:\n" + "\n".join(templates.keys()), ephemeral=True)
 
-@bot.tree.command(name="embed", description="Send a custom or template embed")
+@bot.tree.command(name="embed", description="Send a custom or template embed", guild=discord.Object(id=GUILD_ID))
 @app_commands.describe(
     template="Name of a saved embed template (optional)",
     title="Embed title (if not using template)",
