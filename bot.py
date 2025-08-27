@@ -508,60 +508,6 @@ async def announcement(interaction: discord.Interaction, channel: discord.TextCh
     await log_action(bot, f"{interaction.user} posted announcement in {channel}")
 
 # ---------------------------
-# FastAPI App
-# ---------------------------
-app = FastAPI()
-app.mount("/generated", StaticFiles(directory="generated"), name="generated")
-def run_api():
-    uvicorn.run(app, host="0.0.0.0", port=int(os.environ.get("PORT", 8000)))
-
-# ---------------------------
-# Run Bot + FastAPI
-# ---------------------------
-threading.Thread(target=run_api, daemon=True).start()
-bot.run(os.environ['DISCORD_TOKEN'])
-
-os.makedirs("templates", exist_ok=True)
-os.makedirs("generated", exist_ok=True)
-os.makedirs("dm_templates", exist_ok=True)
-
-if not os.path.exists("templates.json"):
-    with open("templates.json", "w") as f:
-        json.dump({}, f)
-if not os.path.exists("dm_templates.json"):
-    with open("dm_templates.json", "w") as f:
-        json.dump({}, f)
-
-# ---------------------------
-# Helper functions
-# ---------------------------
-def extract_fields(file_path):
-    doc = Document(file_path)
-    text = "\n".join([p.text for p in doc.paragraphs])
-    fields = re.findall(r"\{\{(.*?)\}\}", text)
-    return list(set(fields))
-
-def save_template(template_name, file_path, fields):
-    with open("templates.json", "r") as f:
-        templates = json.load(f)
-    templates[template_name] = {"file_path": file_path, "fields": fields}
-    with open("templates.json", "w") as f:
-        json.dump(templates, f, indent=4)
-
-def save_dm_template(template_name, content, fields):
-    with open("dm_templates.json", "r") as f:
-        templates = json.load(f)
-    templates[template_name] = {"content": content, "fields": fields}
-    with open("dm_templates.json", "w") as f:
-        json.dump(templates, f, indent=4)
-
-BASE_URL = os.environ.get("RAILWAY_PUBLIC_DOMAIN", "http://localhost:8000")
-
-LOG_CHANNEL_ID = 1408784982205534239
-DARK_BLUE = discord.Color.from_rgb(20, 40, 120)  # darker blue
-
-
-# ---------------------------
 # Announcement Buttons
 # ---------------------------
 class AnnouncementView(discord.ui.View):
@@ -654,6 +600,61 @@ async def announcement(interaction: discord.Interaction, channel: discord.TextCh
     log_channel = interaction.guild.get_channel(LOG_CHANNEL_ID)
     if log_channel:
         await log_channel.send(f"📝 Announcement preview sent to {interaction.user} for {channel.mention}.")
+        
+# ---------------------------
+# FastAPI App
+# ---------------------------
+app = FastAPI()
+app.mount("/generated", StaticFiles(directory="generated"), name="generated")
+def run_api():
+    uvicorn.run(app, host="0.0.0.0", port=int(os.environ.get("PORT", 8000)))
+
+# ---------------------------
+# Run Bot + FastAPI
+# ---------------------------
+threading.Thread(target=run_api, daemon=True).start()
+bot.run(os.environ['DISCORD_TOKEN'])
+
+os.makedirs("templates", exist_ok=True)
+os.makedirs("generated", exist_ok=True)
+os.makedirs("dm_templates", exist_ok=True)
+
+if not os.path.exists("templates.json"):
+    with open("templates.json", "w") as f:
+        json.dump({}, f)
+if not os.path.exists("dm_templates.json"):
+    with open("dm_templates.json", "w") as f:
+        json.dump({}, f)
+
+# ---------------------------
+# Helper functions
+# ---------------------------
+def extract_fields(file_path):
+    doc = Document(file_path)
+    text = "\n".join([p.text for p in doc.paragraphs])
+    fields = re.findall(r"\{\{(.*?)\}\}", text)
+    return list(set(fields))
+
+def save_template(template_name, file_path, fields):
+    with open("templates.json", "r") as f:
+        templates = json.load(f)
+    templates[template_name] = {"file_path": file_path, "fields": fields}
+    with open("templates.json", "w") as f:
+        json.dump(templates, f, indent=4)
+
+def save_dm_template(template_name, content, fields):
+    with open("dm_templates.json", "r") as f:
+        templates = json.load(f)
+    templates[template_name] = {"content": content, "fields": fields}
+    with open("dm_templates.json", "w") as f:
+        json.dump(templates, f, indent=4)
+
+BASE_URL = os.environ.get("RAILWAY_PUBLIC_DOMAIN", "http://localhost:8000")
+
+LOG_CHANNEL_ID = 1408784982205534239
+DARK_BLUE = discord.Color.from_rgb(20, 40, 120)  # darker blue
+
+
 
 # ---------------------------
 # FastAPI App
