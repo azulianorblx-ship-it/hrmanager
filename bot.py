@@ -78,11 +78,15 @@ intents = discord.Intents.default()
 intents.message_content = True
 intents.members = True
 
+# Define DARK_BLUE early so it's available everywhere
+DARK_BLUE = discord.Color.from_rgb(20, 40, 120)  # darker blue
+
 class MyBot(commands.Bot):
     def __init__(self):
         super().__init__(command_prefix="!", intents=intents)
 
     async def setup_hook(self):
+        # Guild sync ensures commands with guild=... appear instantly
         await self.tree.sync(guild=discord.Object(id=GUILD_ID))
         print("Slash commands synced!")
 
@@ -282,7 +286,7 @@ def load_embed_templates():
 # ---------------------------
 # Slash Commands
 # ---------------------------
-@bot.tree.command(name="create_embedtemplate", description="Create a new embed template")
+@bot.tree.command(name="create_embedtemplate", description="Create a new embed template", guild=discord.Object(id=GUILD_ID))  # <-- added guild
 async def create_embedtemplate(interaction: discord.Interaction):
     await interaction.response.send_message("Check your DMs to create a new embed template.", ephemeral=True)
     dm_channel = await interaction.user.create_dm()
@@ -336,7 +340,7 @@ async def create_embedtemplate(interaction: discord.Interaction):
     if log_channel:
         await log_channel.send(f"📦 {interaction.user} created embed template '{responses['name']}'.")
 
-@bot.tree.command(name="list_embedtemplates", description="List all saved embed templates")
+@bot.tree.command(name="list_embedtemplates", description="List all saved embed templates", guild=discord.Object(id=GUILD_ID))  # <-- added guild
 async def list_embedtemplates(interaction: discord.Interaction):
     templates = load_embed_templates()
     if not templates:
@@ -344,7 +348,7 @@ async def list_embedtemplates(interaction: discord.Interaction):
         return
     await interaction.response.send_message("📑 Embed Templates:\n" + "\n".join(templates.keys()), ephemeral=True)
 
-@bot.tree.command(name="embed", description="Send a custom or template embed")
+@bot.tree.command(name="embed", description="Send a custom or template embed", guild=discord.Object(id=GUILD_ID))  # <-- added guild
 @app_commands.describe(
     template="Name of a saved embed template (optional)",
     title="Embed title (if not using template)",
@@ -441,72 +445,6 @@ async def update_anntemplate(interaction: discord.Interaction):
     await interaction.followup.send(f"Announcement template updated with fields: {fields}", ephemeral=True)
     await log_action(bot, f"{interaction.user} updated announcement template")
 
-@bot.tree.command(name="announcement", description="Send an announcement using the template", guild=discord.Object(id=GUILD_ID))
-@app_commands.describe(channel="Announcement channel to post in")
-async def announcement(interaction: discord.Interaction, channel: discord.TextChannel):
-    await interaction.response.send_message("Filling announcement template. Check your DMs.", ephemeral=True)
-
-    with open("templates.json", "r") as f:
-        templates = json.load(f)
-    if "announcement" not in templates:
-        await interaction.followup.send("Announcement template not found. Use /update_anntemplate first.", ephemeral=True)
-        return
-
-    fields = templates["announcement"]["fields"]
-
-    try:
-        dm_channel = await interaction.user.create_dm()
-        responses = {}
-        def dm_check(m):
-            return m.author == interaction.user and isinstance(m.channel, discord.DMChannel)
-
-        for field in fields:
-            await dm_channel.send(f"Enter value for {field}:")
-            msg = await bot.wait_for("message", check=dm_check, timeout=300)
-            responses[field] = msg.content
-    except asyncio.TimeoutError:
-        await dm_channel.send("Timeout waiting for input. Announcement cancelled.")
-        return
-
-    doc = DocxTemplate(templates["announcement"]["file_path"])
-    doc.render(responses)
-    output_docx = f"generated/{interaction.user.id}_announcement.docx"
-    doc.save(output_docx)
-    view_url = f"https://view.officeapps.live.com/op/embed.aspx?src={BASE_URL}/generated/{os.path.basename(output_docx)}"
-
-    subject = responses.get("Subject", "Announcement")
-    full_name = responses.get("FullName", interaction.user.name)
-    description = f"Please find a letter attached from {full_name}.\n[View Document]({view_url})"
-
-    embed = Embed(
-        title=f"<:TVALogo:1408794388129120316> {subject}",
-        description=description,
-        color=discord.Color.dark_blue(),
-        timestamp=datetime.utcnow()
-    )
-    embed.set_footer(text=f"Sent by {full_name}")
-
-    preview = await dm_channel.send("Here is a preview of your announcement:", embed=embed)
-    await dm_channel.send("Reply with 'accept' to post or 'deny' to cancel.")
-
-    def confirm_check(m):
-        return m.author == interaction.user and isinstance(m.channel, discord.DMChannel) and m.content.lower() in ["accept", "deny"]
-
-    try:
-        confirm_msg = await bot.wait_for("message", check=confirm_check, timeout=300)
-    except asyncio.TimeoutError:
-        await dm_channel.send("Timeout. Announcement cancelled.")
-        return
-
-    if confirm_msg.content.lower() == "deny":
-        await dm_channel.send("Announcement cancelled.")
-        await log_action(bot, f"{interaction.user} cancelled announcement")
-        return
-
-    await channel.send(content="@everyone", embed=embed)
-    await interaction.followup.send(f"Announcement sent in {channel.mention}", ephemeral=True)
-    await log_action(bot, f"{interaction.user} posted announcement in {channel}")
-
 # ---------------------------
 # Announcement Buttons
 # ---------------------------
@@ -544,9 +482,9 @@ class AnnouncementView(discord.ui.View):
         await interaction.response.edit_message(content="Announcement cancelled.", view=None)
 
 # ---------------------------
-# Announcement Command
+# Announcement Command (single, button-based)
 # ---------------------------
-@bot.tree.command(name="announcement", description="Send an announcement using the template")
+@bot.tree.command(name="announcement", description="Send an announcement using the template", guild=discord.Object(id=GUILD_ID))
 @app_commands.describe(channel="Announcement channel to post in")
 async def announcement(interaction: discord.Interaction, channel: discord.TextChannel):
     await interaction.response.send_message("Filling announcement template. Check your DMs.", ephemeral=True)
@@ -600,61 +538,6 @@ async def announcement(interaction: discord.Interaction, channel: discord.TextCh
     log_channel = interaction.guild.get_channel(LOG_CHANNEL_ID)
     if log_channel:
         await log_channel.send(f"📝 Announcement preview sent to {interaction.user} for {channel.mention}.")
-        
-# ---------------------------
-# FastAPI App
-# ---------------------------
-app = FastAPI()
-app.mount("/generated", StaticFiles(directory="generated"), name="generated")
-def run_api():
-    uvicorn.run(app, host="0.0.0.0", port=int(os.environ.get("PORT", 8000)))
-
-# ---------------------------
-# Run Bot + FastAPI
-# ---------------------------
-threading.Thread(target=run_api, daemon=True).start()
-bot.run(os.environ['DISCORD_TOKEN'])
-
-os.makedirs("templates", exist_ok=True)
-os.makedirs("generated", exist_ok=True)
-os.makedirs("dm_templates", exist_ok=True)
-
-if not os.path.exists("templates.json"):
-    with open("templates.json", "w") as f:
-        json.dump({}, f)
-if not os.path.exists("dm_templates.json"):
-    with open("dm_templates.json", "w") as f:
-        json.dump({}, f)
-
-# ---------------------------
-# Helper functions
-# ---------------------------
-def extract_fields(file_path):
-    doc = Document(file_path)
-    text = "\n".join([p.text for p in doc.paragraphs])
-    fields = re.findall(r"\{\{(.*?)\}\}", text)
-    return list(set(fields))
-
-def save_template(template_name, file_path, fields):
-    with open("templates.json", "r") as f:
-        templates = json.load(f)
-    templates[template_name] = {"file_path": file_path, "fields": fields}
-    with open("templates.json", "w") as f:
-        json.dump(templates, f, indent=4)
-
-def save_dm_template(template_name, content, fields):
-    with open("dm_templates.json", "r") as f:
-        templates = json.load(f)
-    templates[template_name] = {"content": content, "fields": fields}
-    with open("dm_templates.json", "w") as f:
-        json.dump(templates, f, indent=4)
-
-BASE_URL = os.environ.get("RAILWAY_PUBLIC_DOMAIN", "http://localhost:8000")
-
-LOG_CHANNEL_ID = 1408784982205534239
-DARK_BLUE = discord.Color.from_rgb(20, 40, 120)  # darker blue
-
-
 
 # ---------------------------
 # FastAPI App
@@ -669,3 +552,7 @@ def run_api():
 # ---------------------------
 threading.Thread(target=run_api, daemon=True).start()
 bot.run(os.environ['DISCORD_TOKEN'])
+
+# (The duplicate directory setup & helper code block below your original bot.run()
+#  was unreachable; left untouched in your original file if you still have it,
+#  but you don't need it. Keeping just this one run is correct.)
