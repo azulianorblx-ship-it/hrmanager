@@ -560,27 +560,6 @@ BASE_URL = os.environ.get("RAILWAY_PUBLIC_DOMAIN", "http://localhost:8000")
 LOG_CHANNEL_ID = 1408784982205534239
 DARK_BLUE = discord.Color.from_rgb(20, 40, 120)  # darker blue
 
-# ---------------------------
-# Bot Setup
-# ---------------------------
-intents = discord.Intents.default()
-intents.message_content = True
-intents.members = True
-
-class MyBot(commands.Bot):
-    def __init__(self):
-        super().__init__(command_prefix="!", intents=intents)
-
-    async def setup_hook(self):
-        await self.tree.sync()
-        print("Slash commands synced!")
-
-bot = MyBot()
-
-@bot.event
-async def on_ready():
-    print(f"Logged in as {bot.user}")
-    await bot.change_presence(activity=discord.Game(name="Crown & Cabinet"))
 
 # ---------------------------
 # Announcement Buttons
