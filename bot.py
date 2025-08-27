@@ -342,7 +342,7 @@ async def announcement(interaction: discord.Interaction, channel: discord.TextCh
     full_name = responses.get("FullName", interaction.user.name)
     description = f"Please find a letter attached from {full_name}.\n[View Document]({view_url})"
     embed = Embed(
-        title=f"<:logo:1408785100128387142> {subject}",
+        title=f"<:TVALogo:1408794388129120316> {subject}",
         description=description,
         color=DARK_BLUE,
         timestamp=datetime.utcnow()
