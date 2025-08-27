@@ -126,6 +126,15 @@ async def add_template(interaction: discord.Interaction):
     await interaction.followup.send(f"Template '{template_name}' added with fields: {fields}")
     await log_action(bot, f"{interaction.user} added template '{template_name}'")
 
+@bot.tree.command(name="list_docx_templates", description="List all DOCX templates", guild=discord.Object(id=GUILD_ID))
+async def list_docx_templates(interaction: discord.Interaction):
+    with open("templates.json", "r") as f:
+        templates = json.load(f)
+    if not templates:
+        await interaction.response.send_message("No DOCX templates found.", ephemeral=True)
+        return
+    await interaction.response.send_message("📑 DOCX Templates:\n" + "\n".join(templates.keys()), ephemeral=True)
+
 @bot.tree.command(name="generate_document", description="Generate a document from a template", guild=discord.Object(id=GUILD_ID))
 @app_commands.describe(template_name="Name of the template to use")
 async def generate_document(interaction: discord.Interaction, template_name: str):
@@ -192,6 +201,60 @@ async def create_dm_template(interaction: discord.Interaction):
     except asyncio.TimeoutError:
         await dm_channel.send("Timeout. Template creation cancelled.")
 
+@bot.tree.command(name="list_dm_templates", description="List all DM templates", guild=discord.Object(id=GUILD_ID))
+async def list_dm_templates(interaction: discord.Interaction):
+    with open("dm_templates.json", "r") as f:
+        templates = json.load(f)
+    if not templates:
+        await interaction.response.send_message("No DM templates found.", ephemeral=True)
+        return
+    await interaction.response.send_message("📑 DM Templates:\n" + "\n".join(templates.keys()), ephemeral=True)
+
+@bot.tree.command(name="send_dm", description="Send a DM to a user using a saved template", guild=discord.Object(id=GUILD_ID))
+@app_commands.describe(template_name="The DM template to use", user="User to send the DM to")
+async def send_dm(interaction: discord.Interaction, template_name: str, user: discord.User):
+    if not interaction.user.guild_permissions.manage_messages and not interaction.user.guild_permissions.administrator:
+        await interaction.response.send_message("❌ You do not have permission to use this command.", ephemeral=True)
+        return
+
+    with open("dm_templates.json", "r") as f:
+        templates = json.load(f)
+    if template_name not in templates:
+        await interaction.response.send_message("❌ Template not found.", ephemeral=True)
+        return
+
+    template = templates[template_name]
+    fields = template["fields"]
+    content = template["content"]
+
+    dm_channel = await interaction.user.create_dm()
+    await dm_channel.send(f"Please provide the following fields for template '{template_name}': {fields}")
+
+    responses = {}
+    def dm_check(m):
+        return m.author == interaction.user and isinstance(m.channel, discord.DMChannel)
+
+    for field in fields:
+        await dm_channel.send(f"Enter value for {field}:")
+        try:
+            msg = await bot.wait_for("message", check=dm_check, timeout=300)
+            responses[field] = msg.content
+        except asyncio.TimeoutError:
+            await dm_channel.send("Timeout waiting for input.")
+            return
+
+    final_message = content
+    for k, v in responses.items():
+        final_message = final_message.replace(f"{{{{{k}}}}}", v)
+
+    try:
+        target_dm = await user.create_dm()
+        await target_dm.send(final_message)
+        await interaction.response.send_message(f"✅ DM sent to {user.display_name}.", ephemeral=True)
+        await log_action(bot, f"{interaction.user} sent DM to {user} using template '{template_name}'")
+    except:
+        await interaction.response.send_message("❌ Could not send DM (user may have DMs closed).", ephemeral=True)
+
 # ---------------------------
 # Embed Template Handling
 # ---------------------------
@@ -243,7 +306,6 @@ async def create_embedtemplate(interaction: discord.Interaction):
             await dm_channel.send("Timeout. Template creation cancelled.")
             return
 
-    # Parse color
     color = DARK_BLUE
     if responses.get("color"):
         try:
@@ -251,10 +313,9 @@ async def create_embedtemplate(interaction: discord.Interaction):
         except:
             color = DARK_BLUE
 
-    # Clean channel_id
     channel_id = None
     if responses.get("channel_id"):
-        digits = re.sub(r"\\D", "", responses["channel_id"])
+        digits = re.sub(r"\D", "", responses["channel_id"])
         channel_id = int(digits) if digits else None
 
     data = {
@@ -308,7 +369,6 @@ async def embed(
 ):
     await interaction.response.send_message("Processing embed...", ephemeral=True)
 
-    # Template mode
     if template:
         templates = load_embed_templates()
         if template not in templates:
@@ -320,8 +380,8 @@ async def embed(
         image_url, thumbnail_url = data["image_url"], data["thumbnail_url"]
         channel = interaction.guild.get_channel(data["channel_id"])
         ping = data["ping"]
-
-    # Parse color if hex provided
+        
+    # Parse color (always runs, whether template or manual args)
     if color and isinstance(color, str):
         try:
             color = discord.Color(int(color.replace("#", ""), 16))
@@ -330,7 +390,7 @@ async def embed(
     elif isinstance(color, int):
         color = discord.Color(color)
     else:
-        color = DARK_BLUE
+        color = DARK_BLUE      
 
     # Build embed
     embed_obj = Embed(
@@ -339,7 +399,8 @@ async def embed(
         color=color,
         timestamp=datetime.now(timezone.utc)
     )
-    if footer: embed_obj.set_footer(text=footer)
+    if footer:
+        embed_obj.set_footer(text=footer)
     if image_url and image_url.lower().startswith(("http://", "https://")):
         embed_obj.set_image(url=image_url)
     if thumbnail_url and thumbnail_url.lower().startswith(("http://", "https://")):
@@ -355,13 +416,17 @@ async def embed(
 
     log_channel = interaction.guild.get_channel(LOG_CHANNEL_ID)
     if log_channel:
-        await log_channel.send(f"📢 {interaction.user} sent an embed in {channel.mention} (template: {template or 'custom'})")
+        await log_channel.send(
+            f"📢 {interaction.user} sent an embed in {channel.mention} "
+            f"(template: {template or 'custom'})"
+        )
 
 # ---------------------------
 # Run FastAPI
 # ---------------------------
 app = FastAPI()
 app.mount("/generated", StaticFiles(directory="generated"), name="generated")
+
 def run_api():
     uvicorn.run(app, host="0.0.0.0", port=int(os.environ.get("PORT", 8000)))
 
