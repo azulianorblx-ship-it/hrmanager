@@ -96,7 +96,7 @@ async def log_action(bot, message: str):
 @bot.event
 async def on_ready():
     print(f"Logged in as {bot.user}")
-    await bot.change_presence(activity=discord.Game(name="Crown & Cabinet"))
+    await bot.change_presence(activity=discord.Game(name="Thornvale Academy"))
 
 # ---------------------------
 # DOCX Commands
@@ -259,6 +259,163 @@ async def dm_user(interaction: discord.Interaction, user: discord.User, template
             await log_action(bot, f"{interaction.user} sent DM to {user}")
         except asyncio.TimeoutError:
             await interaction.user.send("Timeout. DM cancelled.")
+
+# ---------------------------
+# Embed Template Handling
+# ---------------------------
+EMBED_TEMPLATES_FILE = "embed_templates.json"
+if not os.path.exists(EMBED_TEMPLATES_FILE):
+    with open(EMBED_TEMPLATES_FILE, "w") as f:
+        json.dump({}, f)
+
+def save_embed_template(name, data):
+    with open(EMBED_TEMPLATES_FILE, "r") as f:
+        templates = json.load(f)
+    templates[name] = data
+    with open(EMBED_TEMPLATES_FILE, "w") as f:
+        json.dump(templates, f, indent=4)
+
+def load_embed_templates():
+    with open(EMBED_TEMPLATES_FILE, "r") as f:
+        return json.load(f)
+
+# ---------------------------
+# Slash Commands
+# ---------------------------
+@bot.tree.command(name="create_embedtemplate", description="Create a new embed template")
+async def create_embedtemplate(interaction: discord.Interaction):
+    await interaction.response.send_message("Check your DMs to create a new embed template.", ephemeral=True)
+    dm_channel = await interaction.user.create_dm()
+
+    fields = {
+        "name": "Template name (no spaces)",
+        "title": "Embed title",
+        "description": "Embed description",
+        "footer": "Embed footer (optional)",
+        "color": "Embed color (hex, e.g. #3498db) (optional)",
+        "image_url": "Image URL (optional)",
+        "thumbnail_url": "Thumbnail URL (optional)",
+        "channel_id": "Target channel ID (copy with Discord dev mode)",
+        "ping": "Ping (e.g. @everyone, @here, or role mention, or 'none')"
+    }
+
+    responses = {}
+    def check(m): return m.author == interaction.user and isinstance(m.channel, discord.DMChannel)
+
+    for key, prompt in fields.items():
+        await dm_channel.send(prompt)
+        try:
+            msg = await bot.wait_for("message", check=check, timeout=600)
+            responses[key] = msg.content
+        except asyncio.TimeoutError:
+            await dm_channel.send("Timeout. Template creation cancelled.")
+            return
+
+    # Parse color
+    color = discord.Color.dark_blue()
+    if responses.get("color"):
+        try:
+            color = discord.Color(int(responses["color"].replace("#", ""), 16))
+        except:
+            pass
+
+    data = {
+        "title": responses["title"],
+        "description": responses["description"],
+        "footer": responses.get("footer", ""),
+        "color": color.value,
+        "image_url": responses.get("image_url", ""),
+        "thumbnail_url": responses.get("thumbnail_url", ""),
+        "channel_id": int(responses["channel_id"]),
+        "ping": responses.get("ping", "none")
+    }
+
+    save_embed_template(responses["name"], data)
+    await dm_channel.send(f"✅ Embed template '{responses['name']}' saved!")
+    log_channel = interaction.guild.get_channel(LOG_CHANNEL_ID)
+    if log_channel:
+        await log_channel.send(f"📦 {interaction.user} created embed template '{responses['name']}'.")
+
+@bot.tree.command(name="list_embedtemplates", description="List all saved embed templates")
+async def list_embedtemplates(interaction: discord.Interaction):
+    templates = load_embed_templates()
+    if not templates:
+        await interaction.response.send_message("No embed templates found.", ephemeral=True)
+        return
+    await interaction.response.send_message("📑 Embed Templates:\n" + "\n".join(templates.keys()), ephemeral=True)
+
+@bot.tree.command(name="embed", description="Send a custom or template embed")
+@app_commands.describe(
+    template="Name of a saved embed template (optional)",
+    title="Embed title (if not using template)",
+    description="Embed description (if not using template)",
+    footer="Embed footer (optional)",
+    color="Embed color (hex, optional)",
+    image_url="Image URL (optional)",
+    thumbnail_url="Thumbnail URL (optional)",
+    channel="Target channel (if not using template)",
+    ping="Ping string (e.g. @everyone, @here, role mention, or none)"
+)
+async def embed(
+    interaction: discord.Interaction,
+    template: str = None,
+    title: str = None,
+    description: str = None,
+    footer: str = None,
+    color: str = None,
+    image_url: str = None,
+    thumbnail_url: str = None,
+    channel: discord.TextChannel = None,
+    ping: str = "none"
+):
+    await interaction.response.send_message("Processing embed...", ephemeral=True)
+
+    # Template mode
+    if template:
+        templates = load_embed_templates()
+        if template not in templates:
+            await interaction.followup.send("❌ Template not found.", ephemeral=True)
+            return
+        data = templates[template]
+        title, description, footer = data["title"], data["description"], data["footer"]
+        color = data["color"]
+        image_url, thumbnail_url = data["image_url"], data["thumbnail_url"]
+        channel = interaction.guild.get_channel(data["channel_id"])
+        ping = data["ping"]
+
+    # Parse color if hex provided
+    if color and isinstance(color, str):
+        try:
+            color = discord.Color(int(color.replace("#", ""), 16))
+        except:
+            color = DARK_BLUE
+    elif isinstance(color, int):
+        color = discord.Color(color)
+    else:
+        color = DARK_BLUE
+
+    # Build embed
+    embed = Embed(
+        title=title or "Untitled",
+        description=description or "",
+        color=color,
+        timestamp=datetime.utcnow()
+    )
+    if footer: embed.set_footer(text=footer)
+    if image_url: embed.set_image(url=image_url)
+    if thumbnail_url: embed.set_thumbnail(url=thumbnail_url)
+
+    # Send
+    if not channel:
+        await interaction.followup.send("❌ No channel specified.", ephemeral=True)
+        return
+
+    mention = ping if ping.lower() != "none" else ""
+    await channel.send(content=mention, embed=embed)
+
+    log_channel = interaction.guild.get_channel(LOG_CHANNEL_ID)
+    if log_channel:
+        await log_channel.send(f"📢 {interaction.user} sent an embed in {channel.mention} (template: {template or 'custom'})")
 
 # ---------------------------
 # Announcement Template Commands
