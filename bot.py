@@ -28,6 +28,27 @@ if not os.path.exists("dm_templates.json"):
         json.dump({}, f)
 
 # ---------------------------
+# Role IDs
+# ---------------------------
+ROLE_ANNOUNCEMENT = 1410856956629090366
+ROLE_DOCUMENT_MANAGER = 1410856963507617852
+ROLE_DM_PERMISSIONS = 1410857218303070281
+
+# ---------------------------
+# Helper for role checking
+# ---------------------------
+def has_role(user: discord.Member, role_id: int):
+    return any(role.id == role_id for role in user.roles)
+
+async def require_role(interaction: discord.Interaction, role_id: int):
+    if not has_role(interaction.user, role_id) and not interaction.user.guild_permissions.administrator:
+        await interaction.response.send_message(
+            "❌ You do not have permission to use this command.", ephemeral=True
+        )
+        return False
+    return True
+
+# ---------------------------
 # Helper functions
 # ---------------------------
 def extract_fields(file_path):
@@ -93,6 +114,8 @@ async def on_ready():
 # ---------------------------
 @bot.tree.command(name="add_template", description="Add a new DOCX template", guild=discord.Object(id=GUILD_ID))
 async def add_template(interaction: discord.Interaction):
+    if not await require_role(interaction, ROLE_DOCUMENT_MANAGER):
+        return
     await interaction.response.send_message("Upload your DOCX template as a reply in this channel.")
 
     def check(msg):
@@ -128,6 +151,8 @@ async def add_template(interaction: discord.Interaction):
 
 @bot.tree.command(name="list_docx_templates", description="List all DOCX templates", guild=discord.Object(id=GUILD_ID))
 async def list_docx_templates(interaction: discord.Interaction):
+    if not await require_role(interaction, ROLE_DOCUMENT_MANAGER):
+        return
     with open("templates.json", "r") as f:
         templates = json.load(f)
     if not templates:
@@ -138,6 +163,8 @@ async def list_docx_templates(interaction: discord.Interaction):
 @bot.tree.command(name="generate_document", description="Generate a document from a template", guild=discord.Object(id=GUILD_ID))
 @app_commands.describe(template_name="Name of the template to use")
 async def generate_document(interaction: discord.Interaction, template_name: str):
+    if not await require_role(interaction, ROLE_DOCUMENT_MANAGER):
+        return
     await interaction.response.send_message(f"Generating document for template '{template_name}'. Check your DMs!", ephemeral=True)
 
     with open("templates.json", "r") as f:
@@ -181,6 +208,8 @@ async def generate_document(interaction: discord.Interaction, template_name: str
 # ---------------------------
 @bot.tree.command(name="create_dm_template", description="Create a new DM template", guild=discord.Object(id=GUILD_ID))
 async def create_dm_template(interaction: discord.Interaction):
+    if not await require_role(interaction, ROLE_DM_PERMISSIONS):
+        return
     await interaction.response.send_message("Please check your DMs to create a new DM template.", ephemeral=True)
     dm_channel = await interaction.user.create_dm()
     await dm_channel.send("Send the content of the DM template. Use {{field}} placeholders for variables.")
@@ -203,6 +232,8 @@ async def create_dm_template(interaction: discord.Interaction):
 
 @bot.tree.command(name="list_dm_templates", description="List all DM templates", guild=discord.Object(id=GUILD_ID))
 async def list_dm_templates(interaction: discord.Interaction):
+    if not await require_role(interaction, ROLE_DM_PERMISSIONS):
+        return
     with open("dm_templates.json", "r") as f:
         templates = json.load(f)
     if not templates:
@@ -213,6 +244,8 @@ async def list_dm_templates(interaction: discord.Interaction):
 @bot.tree.command(name="send_dm", description="Send a DM to a user using a saved template", guild=discord.Object(id=GUILD_ID))
 @app_commands.describe(template_name="The DM template to use", user="User to send the DM to")
 async def send_dm(interaction: discord.Interaction, template_name: str, user: discord.User):
+    if not await require_role(interaction, ROLE_DM_PERMISSIONS):
+        return
     if not interaction.user.guild_permissions.manage_messages and not interaction.user.guild_permissions.administrator:
         await interaction.response.send_message("❌ You do not have permission to use this command.", ephemeral=True)
         return
@@ -312,6 +345,8 @@ class AnnouncementView(discord.ui.View):
 @bot.tree.command(name="announcement", description="Send an announcement using the template", guild=discord.Object(id=GUILD_ID))
 @app_commands.describe(channel="Announcement channel to post in")
 async def announcement(interaction: discord.Interaction, channel: discord.TextChannel):
+    if not await require_role(interaction, ROLE_ANNOUNCEMENT):
+        return
     await interaction.response.send_message("Filling announcement template. Check your DMs.", ephemeral=True)
     with open("templates.json", "r") as f:
         templates = json.load(f)
@@ -359,6 +394,8 @@ async def announcement(interaction: discord.Interaction, channel: discord.TextCh
 # ---------------------------
 @bot.tree.command(name="update_anntemplate", description="Update the announcement DOCX template", guild=discord.Object(id=GUILD_ID))
 async def update_anntemplate(interaction: discord.Interaction):
+    if not await require_role(interaction, ROLE_ANNOUNCEMENT):
+        return
     await interaction.response.send_message("Upload your new announcement DOCX template as a reply in this channel.", ephemeral=True)
 
     def check(msg):
@@ -386,6 +423,8 @@ async def update_anntemplate(interaction: discord.Interaction):
 # ---------------------------
 @bot.tree.command(name="create_embedtemplate", description="Create a new embed template", guild=discord.Object(id=GUILD_ID))
 async def create_embedtemplate(interaction: discord.Interaction):
+    if not await require_role(interaction, ROLE_DOCUMENT_MANAGER):
+        return
     await interaction.response.send_message("Check your DMs to create a new embed template.", ephemeral=True)
     dm_channel = await interaction.user.create_dm()
 
@@ -444,6 +483,8 @@ async def create_embedtemplate(interaction: discord.Interaction):
 
 @bot.tree.command(name="list_embedtemplates", description="List all saved embed templates", guild=discord.Object(id=GUILD_ID))
 async def list_embedtemplates(interaction: discord.Interaction):
+    if not await require_role(interaction, ROLE_DOCUMENT_MANAGER):
+        return
     templates = load_embed_templates()
     if not templates:
         await interaction.response.send_message("No embed templates found.", ephemeral=True)
@@ -481,6 +522,9 @@ async def embed(
         if template not in templates:
             await interaction.followup.send("❌ Template not found.", ephemeral=True)
             return
+        if not await require_role(interaction, ROLE_DOCUMENT_MANAGER):
+            return
+            await interaction.followup.send("❌ No permission to complete.", ephemeral=True)
         data = templates[template]
         title, description, footer = data["title"], data["description"], data["footer"]
         color = data["color"]
@@ -527,6 +571,7 @@ async def embed(
             f"📢 {interaction.user} sent an embed in {channel.mention} "
             f"(template: {template or 'custom'})"
         )
+    await interaction.response.send_message("Message successfully delivered to {channel.mention}", ephemeral=True)
 
 # ---------------------------
 # Run FastAPI
