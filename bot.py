@@ -12,6 +12,7 @@ from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 import uvicorn
 from datetime import datetime, timezone
+import aiohttp
 
 # ---------------------------
 # Setup folders and files
@@ -108,6 +109,53 @@ async def log_action(bot, message: str):
 async def on_ready():
     print(f"Logged in as {bot.user}")
     await bot.change_presence(activity=discord.Game(name="Thornvale Academy"))
+
+# ---------------------------
+# Test Version 2
+# ---------------------------
+@bot.tree.command(name="test_v2", description="Test sending a Message Payloads v2 card", guild=discord.Object(id=GUILD_ID))
+async def test_v2(interaction: discord.Interaction):
+    await interaction.response.send_message("Trying to send a v2 message...", ephemeral=True)
+
+    url = f"https://discord.com/api/v10/channels/{interaction.channel.id}/messages"
+    headers = {
+        "Authorization": f"Bot {os.environ['DISCORD_TOKEN']}",
+        "Content-Type": "application/json"
+    }
+
+    payload = {
+        "type": "message",
+        "content": {
+            "version": "2",
+            "body": [
+                {
+                    "type": "heading",
+                    "text": "📢 V2 Test Card"
+                },
+                {
+                    "type": "section",
+                    "text": "If this shows up as a *card-style message* (no colored border), your bot has **Payloads v2**!"
+                },
+                {
+                    "type": "media",
+                    "url": "https://i.imgur.com/Z8r3K1z.png"  # test image
+                },
+                {
+                    "type": "section",
+                    "text": "✅ End of test block"
+                }
+            ]
+        }
+    }
+
+    async with aiohttp.ClientSession() as session:
+        async with session.post(url, headers=headers, json=payload) as resp:
+            if resp.status in (200, 201):
+                await interaction.followup.send("✅ Sent a v2 test message!", ephemeral=True)
+            else:
+                text = await resp.text()
+                await interaction.followup.send(f"❌ Failed ({resp.status}): {text}", ephemeral=True)
+
 
 # ---------------------------
 # DOCX Commands
