@@ -622,6 +622,215 @@ async def embed(
     await interaction.response.send_message("Message successfully delivered to {channel.mention}", ephemeral=True)
 
 # ---------------------------
+# Moderation Commands
+# ---------------------------
+from datetime import timedelta
+
+@bot.tree.command(name="kick", description="Kick a user from the server", guild=discord.Object(id=GUILD_ID))
+@app_commands.describe(user="User to kick", reason="Reason for the kick")
+async def kick(interaction: discord.Interaction, user: discord.Member, reason: str = "No reason provided"):
+    if not interaction.user.guild_permissions.kick_members:
+        await interaction.response.send_message("❌ You don’t have permission to kick members.", ephemeral=True)
+        return
+    try:
+        await user.kick(reason=reason)
+        await interaction.response.send_message(f"✅ {user.mention} has been kicked. Reason: {reason}", ephemeral=True)
+        await log_action(bot, f"{interaction.user} kicked {user} ({reason})")
+    except Exception as e:
+        await interaction.response.send_message(f"❌ Failed to kick {user}. Error: {e}", ephemeral=True)
+
+
+@bot.tree.command(name="ban", description="Ban a user from the server", guild=discord.Object(id=GUILD_ID))
+@app_commands.describe(user="User to ban", reason="Reason for the ban")
+async def ban(interaction: discord.Interaction, user: discord.Member, reason: str = "No reason provided"):
+    if not interaction.user.guild_permissions.ban_members:
+        await interaction.response.send_message("❌ You don’t have permission to ban members.", ephemeral=True)
+        return
+    try:
+        await user.ban(reason=reason)
+        await interaction.response.send_message(f"✅ {user.mention} has been banned. Reason: {reason}", ephemeral=True)
+        await log_action(bot, f"{interaction.user} banned {user} ({reason})")
+    except Exception as e:
+        await interaction.response.send_message(f"❌ Failed to ban {user}. Error: {e}", ephemeral=True)
+
+
+# We’ll store warnings in a JSON file
+WARN_FILE = "warnings.json"
+if not os.path.exists(WARN_FILE):
+    with open(WARN_FILE, "w") as f:
+        json.dump({}, f)
+
+def load_warnings():
+    with open(WARN_FILE, "r") as f:
+        return json.load(f)
+
+def save_warnings(data):
+    with open(WARN_FILE, "w") as f:
+        json.dump(data, f, indent=4)
+
+
+@bot.tree.command(name="warn", description="Warn a user", guild=discord.Object(id=GUILD_ID))
+@app_commands.describe(user="User to warn", reason="Reason for the warning")
+async def warn(interaction: discord.Interaction, user: discord.Member, reason: str = "No reason provided"):
+    if not interaction.user.guild_permissions.manage_messages:
+        await interaction.response.send_message("❌ You don’t have permission to warn members.", ephemeral=True)
+        return
+
+    warnings = load_warnings()
+    user_id = str(user.id)
+
+    if user_id not in warnings:
+        warnings[user_id] = []
+    warnings[user_id].append({"moderator": str(interaction.user), "reason": reason, "time": str(datetime.utcnow())})
+    save_warnings(warnings)
+
+    try:
+        await user.send(f"⚠️ You have been warned in **{interaction.guild.name}**. Reason: {reason}")
+    except:
+        pass  # User might have DMs closed
+
+    await interaction.response.send_message(f"✅ {user.mention} has been warned. Reason: {reason}", ephemeral=True)
+    await log_action(bot, f"{interaction.user} warned {user} ({reason})")
+
+
+@bot.tree.command(name="timeout", description="Timeout a user for a given duration", guild=discord.Object(id=GUILD_ID))
+@app_commands.describe(user="User to timeout", duration="Duration in minutes", reason="Reason for the timeout")
+async def timeout(interaction: discord.Interaction, user: discord.Member, duration: int, reason: str = "No reason provided"):
+    if not interaction.user.guild_permissions.moderate_members:
+        await interaction.response.send_message("❌ You don’t have permission to timeout members.", ephemeral=True)
+        return
+    try:
+        until = datetime.utcnow() + timedelta(minutes=duration)
+        await user.timeout(until, reason=reason)
+        await interaction.response.send_message(
+            f"✅ {user.mention} has been timed out for {duration} minutes. Reason: {reason}", ephemeral=True
+        )
+        await log_action(bot, f"{interaction.user} timed out {user} ({reason}, {duration}m)")
+    except Exception as e:
+        await interaction.response.send_message(f"❌ Failed to timeout {user}. Error: {e}", ephemeral=True)
+
+# ---------------------------
+# Modmail System (with Attachments)
+# ---------------------------
+
+MODMAIL_CATEGORY_ID = 1408849860202860594  # category where tickets go
+SENIOR_LEADERSHIP_ROLE = 1410288467782533270  # role allowed to see tickets
+MODMAIL_FILE = "modmail_tickets.json"
+
+if not os.path.exists(MODMAIL_FILE):
+    with open(MODMAIL_FILE, "w") as f:
+        json.dump({}, f)
+
+def load_modmail():
+    with open(MODMAIL_FILE, "r") as f:
+        return json.load(f)
+
+def save_modmail(data):
+    with open(MODMAIL_FILE, "w") as f:
+        json.dump(data, f, indent=4)
+
+
+@bot.event
+async def on_message(message):
+    if message.author.bot:
+        return
+
+    # ---------------------------
+    # User DMs the bot
+    # ---------------------------
+    if isinstance(message.channel, discord.DMChannel):
+        tickets = load_modmail()
+        user_id = str(message.author.id)
+        guild = bot.get_guild(GUILD_ID)
+        category = guild.get_channel(MODMAIL_CATEGORY_ID)
+
+        if user_id not in tickets:
+            # Create private ticket channel
+            overwrites = {
+                guild.default_role: discord.PermissionOverwrite(view_channel=False),
+                guild.get_role(SENIOR_LEADERSHIP_ROLE): discord.PermissionOverwrite(view_channel=True, send_messages=True),
+                guild.me: discord.PermissionOverwrite(view_channel=True, send_messages=True)
+            }
+            channel = await category.create_text_channel(name=f"ticket-{message.author.name}", overwrites=overwrites)
+
+            tickets[user_id] = channel.id
+            save_modmail(tickets)
+
+            await message.channel.send("📬 Thank you! Your query has been submitted. Senior Leadership will contact you shortly.")
+            await channel.send(f"📩 New Modmail from {message.author.mention} ({message.author.id})")
+
+        else:
+            channel = guild.get_channel(tickets[user_id])
+
+        if channel:
+            embed = discord.Embed(description=message.content or "*[No text]*", color=discord.Color.blue())
+            embed.set_author(name=f"{message.author}", icon_url=message.author.display_avatar.url)
+            await channel.send(embed=embed)
+
+            # Forward attachments
+            for attachment in message.attachments:
+                await channel.send(f"📎 Attachment from {message.author}:", file=await attachment.to_file())
+
+
+    # ---------------------------
+    # Staff replies in ticket channel with /r
+    # ---------------------------
+    elif message.channel.category_id == MODMAIL_CATEGORY_ID and message.content.startswith("/r "):
+        tickets = load_modmail()
+        reply_text = message.content[3:].strip()
+
+        for user_id, channel_id in tickets.items():
+            if channel_id == message.channel.id:
+                user = await bot.fetch_user(int(user_id))
+
+                embed = discord.Embed(description=reply_text or "*[No text]*", color=discord.Color.green())
+                embed.set_author(name=f"{message.author} (Senior Leadership)", icon_url=message.author.display_avatar.url)
+
+                try:
+                    await user.send(embed=embed)
+
+                    # Forward attachments if any
+                    for attachment in message.attachments:
+                        await user.send(file=await attachment.to_file())
+
+                    await message.channel.send(f"✅ Reply sent to {user.mention}")
+                except:
+                    await message.channel.send("❌ Could not DM user.")
+                break
+
+
+# ---------------------------
+# Slash command: close ticket
+# ---------------------------
+@bot.tree.command(name="close", description="Close a modmail ticket", guild=discord.Object(id=GUILD_ID))
+@app_commands.describe(user="User whose ticket you want to close")
+async def close_modmail(interaction: discord.Interaction, user: discord.User):
+    tickets = load_modmail()
+    user_id = str(user.id)
+
+    if user_id not in tickets:
+        await interaction.response.send_message("❌ That user does not have an open ticket.", ephemeral=True)
+        return
+
+    channel_id = tickets[user_id]
+    channel = interaction.guild.get_channel(channel_id)
+
+    if channel:
+        await channel.delete()
+
+    del tickets[user_id]
+    save_modmail(tickets)
+
+    try:
+        dm = await user.create_dm()
+        await dm.send("📪 Your modmail ticket has been closed by Senior Leadership. Thank you for reaching out.")
+    except:
+        pass
+
+    await interaction.response.send_message(f"✅ Closed modmail ticket for {user.mention}.", ephemeral=True)
+    await log_action(bot, f"{interaction.user} closed modmail for {user}")
+
+# ---------------------------
 # Run FastAPI
 # ---------------------------
 app = FastAPI()
