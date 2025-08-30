@@ -77,7 +77,7 @@ GUILD_ID = int(os.environ.get("GUILD_ID", 0))
 if not GUILD_ID:
     raise ValueError("GUILD_ID not set in environment variables")
 
-LOG_CHANNEL_ID = 1408784982205534239
+LOG_CHANNEL_ID = 1411299414869282847
 DARK_BLUE = discord.Color.from_rgb(20, 40, 120)
 
 # ---------------------------
