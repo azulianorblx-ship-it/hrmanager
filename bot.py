@@ -210,95 +210,6 @@ import aiohttp
 import asyncio
 import discord
 
-@bot.tree.command(name="json", description="Send a Discohook-style JSON via webhook with preview", guild=discord.Object(id=GUILD_ID))
-async def json_command(interaction: discord.Interaction):
-    # ensure only staff can use
-    if not await require_role(interaction, ROLE_DOCUMENT_MANAGER):
-        await interaction.response.send_message("❌ You do not have permission to use this.", ephemeral=True)
-        return
-
-    await interaction.response.send_message("📩 Check your DMs to send JSON via webhook.", ephemeral=True)
-
-    user = interaction.user
-    dm = await user.create_dm()
-
-    # Ask for channel ID
-    await dm.send("Enter the channel ID where the webhook should send the message:")
-
-    def check_channel(m):
-        return m.author.id == user.id and isinstance(m.channel, discord.DMChannel)
-
-    try:
-        channel_msg = await bot.wait_for("message", timeout=120.0, check=check_channel)
-        target_channel_id = int(channel_msg.content.strip())
-        target_channel = interaction.guild.get_channel(target_channel_id)
-        if not target_channel:
-            await dm.send("❌ Invalid channel ID. Please restart `/json`.")
-            return
-    except asyncio.TimeoutError:
-        await dm.send("⏰ Timed out. Please restart `/json`.")
-        return
-    except ValueError:
-        await dm.send("❌ Invalid input. Please restart `/json`.")
-        return
-
-    # Ask for JSON payload
-    await dm.send(
-        "Paste your Discohook JSON payload here (content, embeds, username, avatar_url, etc.):"
-    )
-
-    def check_json(m):
-        return m.author.id == user.id and isinstance(m.channel, discord.DMChannel)
-
-    try:
-        json_msg = await bot.wait_for("message", timeout=300.0, check=check_json)
-        try:
-            payload = json.loads(json_msg.content)
-        except json.JSONDecodeError as e:
-            await dm.send(f"❌ Invalid JSON: {e}. Please restart `/json`.")
-            return
-    except asyncio.TimeoutError:
-        await dm.send("⏰ Timed out. Please restart `/json`.")
-        return
-
-    # Preview step
-    preview_msg = "📩 **Preview:**\n"
-    if payload.get("content"):
-        preview_msg += f"**Content:** {payload['content']}\n"
-    if payload.get("embeds"):
-        try:
-            for e in payload["embeds"]:
-                embed_preview = discord.Embed.from_dict(e)
-                preview_msg += f"**Embed:**\nTitle: {embed_preview.title}\nDescription: {embed_preview.description}\n"
-        except Exception:
-            preview_msg += "**Embed:** Invalid format or preview not available\n"
-
-    await dm.send(preview_msg)
-    await dm.send("✅ Type `send` to send the JSON to the channel, or `cancel` to abort.")
-
-    # Wait for confirmation
-    def check_confirm(m):
-        return m.author.id == user.id and isinstance(m.channel, discord.DMChannel) and m.content.lower() in ["send", "cancel"]
-
-    try:
-        confirm_msg = await bot.wait_for("message", timeout=120.0, check=check_confirm)
-        if confirm_msg.content.lower() == "cancel":
-            await dm.send("❌ JSON sending cancelled.")
-            return
-    except asyncio.TimeoutError:
-        await dm.send("⏰ Timed out. JSON sending cancelled.")
-        return
-
-    # Send via webhook
-    try:
-        webhook = await target_channel.create_webhook(name=f"{user.name}-json")
-        async with aiohttp.ClientSession() as session:
-            webhook_obj = discord.Webhook.from_url(webhook.url, session=session)
-            await webhook_obj.send(**payload)
-        await webhook.delete()  # clean up
-        await dm.send(f"✅ JSON successfully sent via webhook to {target_channel.mention}")
-    except Exception as e:
-        await dm.send(f"❌ Failed to send JSON via webhook. Error: {e}")
 # ---------------------------
 # DM Template Commands
 # ---------------------------
@@ -531,6 +442,24 @@ async def msg(interaction: discord.Interaction, channel: discord.TextChannel, me
     except Exception as e:
         await interaction.response.send_message(f"❌ Failed to send message: {e}", ephemeral=True)
 
+@bot.tree.command(name="image", description="Send an image or file to a channel", guild=discord.Object(id=GUILD_ID))
+@app_commands.describe(
+    channel="Channel where the file will be sent",
+    file="The file to send"
+)
+async def image(interaction: discord.Interaction, channel: discord.TextChannel, file: discord.Attachment):
+    # ✅ Require role check
+    if not await require_role(interaction, ROLE_DOCUMENT_MANAGER):
+        await interaction.response.send_message("❌ You don’t have permission to use this.", ephemeral=True)
+        return
+
+    try:
+        # Convert the attachment to a discord.File
+        discord_file = await file.to_file()
+        await channel.send(file=discord_file)
+        await interaction.response.send_message(f"✅ File sent to {channel.mention}", ephemeral=True)
+    except Exception as e:
+        await interaction.response.send_message(f"❌ Failed to send file: {e}", ephemeral=True)
 
 # ---------------------------
 # Embed Commands
