@@ -559,7 +559,6 @@ async def embed(interaction: discord.Interaction):
             except ValueError:
                 await dm.send("❌ Invalid channel ID. Please restart `/embed`.")
                 return
-            answers[field] = msg.channel_mentions[0].id
         else:
             answers[field] = msg.content
 
