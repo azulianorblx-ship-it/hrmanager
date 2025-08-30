@@ -466,6 +466,24 @@ async def update_anntemplate(interaction: discord.Interaction):
     await interaction.followup.send(f"Announcement template updated with fields: {fields}", ephemeral=True)
     await log_action(bot, f"{interaction.user} updated announcement template")
 
+@bot.tree.command(name="msg", description="Send a plain message to a channel", guild=discord.Object(id=GUILD_ID))
+@app_commands.describe(
+    channel="Channel where the message will be sent",
+    message="The message text to send"
+)
+async def msg(interaction: discord.Interaction, channel: discord.TextChannel, message: str):
+    # ✅ Require role check
+    if not await require_role(interaction, ROLE_DOCUMENT_MANAGER):
+        await interaction.response.send_message("❌ You don’t have permission to use this.", ephemeral=True)
+        return
+
+    try:
+        await channel.send(message)
+        await interaction.response.send_message(f"✅ Message sent to {channel.mention}", ephemeral=True)
+    except Exception as e:
+        await interaction.response.send_message(f"❌ Failed to send message: {e}", ephemeral=True)
+
+
 # ---------------------------
 # Embed Commands
 # ---------------------------
@@ -539,87 +557,88 @@ async def list_embedtemplates(interaction: discord.Interaction):
         return
     await interaction.response.send_message("📑 Embed Templates:\n" + "\n".join(templates.keys()), ephemeral=True)
 
-@bot.tree.command(name="embed", description="Send a custom or template embed", guild=discord.Object(id=GUILD_ID))
-@app_commands.describe(
-    template="Name of a saved embed template (optional)",
-    title="Embed title (if not using template)",
-    description="Embed description (if not using template)",
-    footer="Embed footer (optional)",
-    color="Embed color (hex, optional)",
-    image_url="Image URL (optional)",
-    thumbnail_url="Thumbnail URL (optional)",
-    channel="Target channel (if not using template)",
-    ping="Ping string (e.g. @everyone, @here, role mention, or none)"
-)
-async def embed(
-    interaction: discord.Interaction,
-    template: str = None,
-    title: str = None,
-    description: str = None,
-    footer: str = None,
-    color: str = None,
-    image_url: str = None,
-    thumbnail_url: str = None,
-    channel: discord.TextChannel = None,
-    ping: str = "none"
-):
-    await interaction.response.send_message("Processing embed...", ephemeral=True)
+# store ongoing embed sessions
+active_embeds = {}
 
-    if template:
-        templates = load_embed_templates()
-        if template not in templates:
-            await interaction.followup.send("❌ Template not found.", ephemeral=True)
-            return
-        if not await require_role(interaction, ROLE_DOCUMENT_MANAGER):
-            return
-            await interaction.followup.send("❌ No permission to complete.", ephemeral=True)
-        data = templates[template]
-        title, description, footer = data["title"], data["description"], data["footer"]
-        color = data["color"]
-        image_url, thumbnail_url = data["image_url"], data["thumbnail_url"]
-        channel = interaction.guild.get_channel(data["channel_id"])
-        ping = data["ping"]
-        
-    # Parse color (always runs, whether template or manual args)
-    if color and isinstance(color, str):
-        try:
-            color = discord.Color(int(color.replace("#", ""), 16))
-        except:
-            color = DARK_BLUE
-    elif isinstance(color, int):
-        color = discord.Color(color)
-    else:
-        color = DARK_BLUE      
-
-    # Build embed
-    embed_obj = Embed(
-        title=title or "Untitled",
-        description=description or "",
-        color=color,
-        timestamp=datetime.now(timezone.utc)
-    )
-    if footer:
-        embed_obj.set_footer(text=footer)
-    if image_url and image_url.lower().startswith(("http://", "https://")):
-        embed_obj.set_image(url=image_url)
-    if thumbnail_url and thumbnail_url.lower().startswith(("http://", "https://")):
-        embed_obj.set_thumbnail(url=thumbnail_url)
-
-    # Send
-    if not channel:
-        await interaction.followup.send("❌ No channel specified.", ephemeral=True)
+@bot.tree.command(name="embed", description="Create a custom embed interactively", guild=discord.Object(id=GUILD_ID))
+async def embed(interaction: discord.Interaction):
+    # ensure only staff can use
+    if not await require_role(interaction, ROLE_DOCUMENT_MANAGER):
+        await interaction.response.send_message("❌ You do not have permission to use this.", ephemeral=True)
         return
 
-    mention = ping if ping.lower() != "none" else ""
-    await channel.send(content=mention, embed=embed_obj)
+    await interaction.response.send_message("📩 Check your DMs to build your embed.", ephemeral=True)
 
-    log_channel = interaction.guild.get_channel(LOG_CHANNEL_ID)
-    if log_channel:
-        await log_channel.send(
-            f"📢 {interaction.user} sent an embed in {channel.mention} "
-            f"(template: {template or 'custom'})"
-        )
-    await interaction.response.send_message("Message successfully delivered to {channel.mention}", ephemeral=True)
+    user = interaction.user
+    dm = await user.create_dm()
+
+    questions = [
+        ("title", "Enter the **embed title** (or type `skip`)"),
+        ("description", "Enter the **embed description** (or type `skip`)"),
+        ("footer", "Enter the **embed footer** (or type `skip`)"),
+        ("color", "Enter the **embed color** (hex, e.g. #3498db) (or type `skip`)"),
+        ("image_url", "Enter the **image URL** (or type `skip`)"),
+        ("thumbnail_url", "Enter the **thumbnail URL** (or type `skip`)"),
+        ("ping", "Enter a ping (`@everyone`, `@here`, role mention, or `none`)"),
+        ("channel", "Mention the **target channel** (e.g. #announcements)")
+    ]
+
+    answers = {}
+
+    def check(m):
+        return m.author.id == user.id and isinstance(m.channel, discord.DMChannel)
+
+    for field, prompt in questions:
+        await dm.send(prompt)
+
+        try:
+            msg = await bot.wait_for("message", timeout=120.0, check=check)
+        except asyncio.TimeoutError:
+            await dm.send("⏰ Timed out. Please restart `/embed`.")
+            return
+
+        if msg.content.lower() == "skip":
+            answers[field] = None
+        elif field == "channel" and msg.channel_mentions:
+            answers[field] = msg.channel_mentions[0].id
+        else:
+            answers[field] = msg.content
+
+    # Build embed
+    color = DARK_BLUE
+    if answers.get("color"):
+        try:
+            color = discord.Color(int(answers["color"].replace("#", ""), 16))
+        except:
+            pass
+
+    embed_obj = discord.Embed(
+        title=answers.get("title") or "",
+        description=answers.get("description") or "",
+        color=color
+    )
+
+    if answers.get("footer"):
+        embed_obj.set_footer(text=answers["footer"])
+    if answers.get("image_url"):
+        embed_obj.set_image(url=answers["image_url"])
+    if answers.get("thumbnail_url"):
+        embed_obj.set_thumbnail(url=answers["thumbnail_url"])
+
+    # Find channel
+    target_channel = None
+    if answers.get("channel"):
+        target_channel = interaction.guild.get_channel(int(answers["channel"]))
+
+    if not target_channel:
+        await dm.send("❌ No valid channel provided. Cancelled.")
+        return
+
+    # Send embed
+    ping_text = "" if not answers.get("ping") or answers["ping"].lower() == "none" else answers["ping"]
+    await target_channel.send(content=ping_text, embed=embed_obj)
+
+    await dm.send(f"✅ Embed successfully sent to {target_channel.mention}")
 
 # ---------------------------
 # Moderation Commands
@@ -742,16 +761,20 @@ async def on_message(message):
         tickets = load_modmail()
         user_id = str(message.author.id)
         guild = bot.get_guild(GUILD_ID)
-        category = guild.get_channel(MODMAIL_CATEGORY_ID)
 
-        if user_id not in tickets:
+        # Only open ticket if user says HELP
+        if message.content.strip().upper() == "HELP" and user_id not in tickets:
+            category = guild.get_channel(MODMAIL_CATEGORY_ID)
+
             # Create private ticket channel
             overwrites = {
                 guild.default_role: discord.PermissionOverwrite(view_channel=False),
                 guild.get_role(SENIOR_LEADERSHIP_ROLE): discord.PermissionOverwrite(view_channel=True, send_messages=True),
                 guild.me: discord.PermissionOverwrite(view_channel=True, send_messages=True)
             }
+
             channel = await category.create_text_channel(name=f"ticket-{message.author.name}", overwrites=overwrites)
+
 
             tickets[user_id] = channel.id
             save_modmail(tickets)
