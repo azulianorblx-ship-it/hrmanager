@@ -763,7 +763,7 @@ async def on_message(message):
             channel = guild.get_channel(tickets[user_id])
 
         if channel:
-            embed = discord.Embed(description=message.content or "*[No text]*", color=discord.Color.blue())
+            embed = discord.Embed(description=message.content or "*[No text]*", color=DARK_BLUE)
             embed.set_author(name=f"{message.author}", icon_url=message.author.display_avatar.url)
             await channel.send(embed=embed)
 
@@ -783,7 +783,7 @@ async def on_message(message):
             if channel_id == message.channel.id:
                 user = await bot.fetch_user(int(user_id))
 
-                embed = discord.Embed(description=reply_text or "*[No text]*", color=discord.Color.green())
+                embed = discord.Embed(description=reply_text or "*[No text]*", color=DARK_BLUE)
                 embed.set_author(name=f"{message.author} (Senior Leadership)", icon_url=message.author.display_avatar.url)
 
                 try:
