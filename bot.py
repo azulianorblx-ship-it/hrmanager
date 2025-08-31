@@ -916,6 +916,48 @@ async def send_jsonfile_dynamic(interaction: discord.Interaction, channel: disco
     except Exception as e:
         await interaction.followup.send(f"❌ Error processing JSON file: {e}")
 
+@bot.tree.command(
+    name="send_sample_container",
+    description="Send a sample components v2 container to a channel",
+    guild=discord.Object(id=GUILD_ID)
+)
+@app_commands.describe(channel="Channel to send the container to")
+async def send_sample_container(interaction: discord.Interaction, channel: discord.TextChannel):
+    # Role check (optional)
+    if not await require_role(interaction, ROLE_DOCUMENT_MANAGER):
+        return
+
+    await interaction.response.defer(ephemeral=True)
+
+    # Sample payload: a button + content
+    payload = {
+        "content": "Here is a sample container with a button!",
+        "components": [
+            {
+                "type": 1,  # Action row
+                "components": [
+                    {
+                        "type": 2,  # Button
+                        "style": 1,  # Primary
+                        "label": "Click Me",
+                        "custom_id": "sample_button_1"
+                    }
+                ]
+            }
+        ]
+    }
+
+    url = f"https://discord.com/api/v10/channels/{channel.id}/messages"
+    headers = {"Authorization": f"Bot {os.environ['DISCORD_TOKEN']}"}
+
+    async with aiohttp.ClientSession() as session:
+        async with session.post(url, headers=headers, json=payload) as resp:
+            if resp.status in (200, 201):
+                await interaction.followup.send(f"✅ Sample container sent to {channel.mention}")
+            else:
+                err = await resp.text()
+                await interaction.followup.send(f"❌ Failed ({resp.status}): {err}")
+
 
 # ---------------------------
 # Run FastAPI
