@@ -835,7 +835,7 @@ async def send_jsonfile_dynamic(interaction: discord.Interaction, channel: disco
 
 @bot.tree.command(
     name="embed",
-    description="Create a custom container interactively",
+    description="Send a simple container message",
     guild=discord.Object(id=GUILD_ID)
 )
 async def embed(interaction: discord.Interaction):
@@ -847,87 +847,70 @@ async def embed(interaction: discord.Interaction):
     user = interaction.user
     dm = await user.create_dm()
 
-    questions = [
-        ("title", "Enter the **title** (or type `skip`)"),
-        ("description", "Enter the **description** (or type `skip`)"),
-        ("footer", "Enter the **footer** (or type `skip`)"),
-        ("image_url", "Enter the **image URL** (or type `skip`)"),
-        ("thumbnail_url", "Enter the **thumbnail URL** (or type `skip`)"),
-        ("ping", "Enter a ping (`@everyone`, `@here`, role mention, or `none`)"),
-        ("channel", "State the channel id. REQUIRED.")
-    ]
-
-    answers = {}
-
+    # Ask for the main text
+    await dm.send("Enter the text to send in the container:")
     def check(m):
         return m.author.id == user.id and isinstance(m.channel, discord.DMChannel)
 
-    for field, prompt in questions:
-        await dm.send(prompt)
-        try:
-            msg = await bot.wait_for("message", timeout=120.0, check=check)
-        except asyncio.TimeoutError:
-            await dm.send("⏰ Timed out. Please restart `/embed`.")
-            return
+    try:
+        msg = await bot.wait_for("message", timeout=120.0, check=check)
+    except asyncio.TimeoutError:
+        await dm.send("⏰ Timed out. Please restart `/embed`.")
+        return
 
-        if msg.content.lower() == "skip":
-            answers[field] = None
-        elif field == "channel":
-            try:
-                answers[field] = int(msg.content.strip())
-            except ValueError:
-                await dm.send("❌ Invalid channel ID. Please restart `/embed`.")
-                return
-        else:
-            answers[field] = msg.content
+    content_text = msg.content
 
-    # Build payload for container message
-    components = [
-        {
-            "type": 17,
-            "components": [
-                {
-                    "type": 9,
-                    "components": [
-                        {
-                            "type": 10,
-                            "content": f"**{answers.get('title') or ''}**\n{answers.get('description') or ''}"
-                        }
-                    ],
-                    "accessory": None  # Could add a button if desired
-                }
-            ]
-        }
-    ]
+    # Ask for ping
+    await dm.send("Enter a ping (`@everyone`, `@here`, role mention, or `none`):")
+    try:
+        ping_msg = await bot.wait_for("message", timeout=60.0, check=check)
+    except asyncio.TimeoutError:
+        await dm.send("⏰ Timed out. Please restart `/embed`.")
+        return
 
-    if answers.get("image_url"):
-        components[0]["components"].append({
-            "type": 12,
-            "items": [{"media": {"url": answers["image_url"]}}]
-        })
+    ping_text = "" if ping_msg.content.lower() == "none" else ping_msg.content
 
-    payload = {
-        "flags": 0,
-        "components": components
+    # Ask for channel
+    await dm.send("Enter the channel ID to send to:")
+    try:
+        channel_msg = await bot.wait_for("message", timeout=60.0, check=check)
+        target_channel_id = int(channel_msg.content.strip())
+    except (asyncio.TimeoutError, ValueError):
+        await dm.send("❌ Invalid input. Please restart `/embed`.")
+        return
+
+    # Build payload
+    newmessage = {
+        "content": ping_text,
+        "components": [
+            {
+                "type": 17,
+                "components": [
+                    {
+                        "type": 9,
+                        "components": [
+                            {"type": 10, "content": content_text}
+                        ]
+                    }
+                ]
+            }
+        ]
     }
 
-    if answers.get("ping") and answers["ping"].lower() != "none":
-        payload["content"] = answers["ping"]
-
-    # Send via API
-    url = f"https://discord.com/api/v10/channels/{answers['channel']}/messages"
+    url = f"https://discord.com/api/v10/channels/{target_channel_id}/messages"
     headers = {
         "Authorization": f"Bot {os.environ['DISCORD_TOKEN']}",
         "Content-Type": "application/json"
     }
 
     async with aiohttp.ClientSession() as session:
-        async with session.post(url, headers=headers, json=payload) as resp:
+        async with session.post(url, headers=headers, json=newmessage) as resp:
             text = await resp.text()
             if resp.status in (200, 201):
-                await dm.send(f"✅ Container successfully sent to <#{answers['channel']}>")
+                await dm.send(f"✅ Container successfully sent to <#{target_channel_id}>")
             else:
                 await dm.send(f"❌ Failed to send container: {resp.status} {text}")
+
 
 @bot.tree.command(
     name="staffjoin",
@@ -942,7 +925,7 @@ async def send_sample_container(interaction: discord.Interaction, channel: disco
     await interaction.response.defer(ephemeral=True)
 
     # Discohook-style payload
-    payload = {
+    staffj = {
   "flags": 32768,
   "components": [
     {
@@ -990,12 +973,13 @@ async def send_sample_container(interaction: discord.Interaction, channel: disco
     }
 
     async with aiohttp.ClientSession() as session:
-        async with session.post(url, headers=headers, json=payload) as resp:
+        async with session.post(url, headers=headers, json=staffj) as resp:
             text = await resp.text()
             if resp.status in (200, 201):
                 await interaction.followup.send(f"✅ Container sent to {channel.mention}")
             else:
                 await interaction.followup.send(f"❌ Failed to send container: {resp.status} {text}")
+           
                 
 @bot.tree.command(
     name="briefing",
@@ -1010,7 +994,7 @@ async def send_sample_container(interaction: discord.Interaction, channel: disco
     await interaction.response.defer(ephemeral=True)
 
     # Discohook-style payload
-    payload = {
+    brief = {
   "flags": 32768,
   "components": [
     {
@@ -1058,14 +1042,83 @@ async def send_sample_container(interaction: discord.Interaction, channel: disco
     }
 
     async with aiohttp.ClientSession() as session:
-        async with session.post(url, headers=headers, json=payload) as resp:
+        async with session.post(url, headers=headers, json=brief) as resp:
             text = await resp.text()
             if resp.status in (200, 201):
                 await interaction.followup.send(f"✅ Container sent to {channel.mention}")
             else:
                 await interaction.followup.send(f"❌ Failed to send container: {resp.status} {text}")
 
+@bot.tree.command(
+    name="session",
+    description="Trigger session announcement.",
+    guild=discord.Object(id=GUILD_ID)
+)
+@app_commands.describe(channel="Channel to send the container to")
+async def send_sample_container(interaction: discord.Interaction, channel: discord.TextChannel):
+    if not await require_role(interaction, ROLE_DOCUMENT_MANAGER):
+        return
 
+    await interaction.response.defer(ephemeral=True)
+
+    # Discohook-style payload
+    sessions = {
+  "flags": 32768,
+  "components": [
+      {
+      "type": 10,
+      "content": "@everyone"
+    },
+    {
+      "type": 17,
+      "components": [
+        {
+          "type": 12,
+          "items": [
+            {
+              "media": {
+                "url": "https://media.discordapp.net/attachments/1411299414869282847/1411759919241363527/Banners_11.png?ex=68b5d361&is=68b481e1&hm=95ceabba5571b5baf6bad6f9efe6c89ace8c0f66e659b9c5f4e043b9861c64fd&=&format=webp&quality=lossless"
+              }
+            }
+          ]
+        },
+        {
+          "type": 9,
+          "components": [
+            {
+              "type": 10,
+              "content": "# Gates opened,\nWe have now opened our gates to allow students to begin making their way to the hall. Please line up with your form group and await for the Headteacher to begin morning announcements.\n\nPlease ensure you are wearing your uniform, or it will be automatically applied to you when you join. Sixth Form students and visitors must visit reception to request their lanyard."
+            }
+          ],
+          "accessory": {
+            "type": 2,
+            "style": 5,
+            "label": "Join!",
+            "url": "https://www.roblox.com/games/83329354034194/Thornvale",
+            "custom_id": "p_209357303147663521"
+          }
+        }
+      ]
+    }
+  ]
+}
+
+  
+
+    url = f"https://discord.com/api/v10/channels/{channel.id}/messages"
+    headers = {
+        "Authorization": f"Bot {os.environ['DISCORD_TOKEN']}",
+        "Content-Type": "application/json"
+    }
+
+    async with aiohttp.ClientSession() as session:
+        async with session.post(url, headers=headers, json=sessions) as resp:
+            text = await resp.text()
+            if resp.status in (200, 201):
+                await interaction.followup.send(f"✅ Container sent to {channel.mention}")
+            else:
+                await interaction.followup.send(f"❌ Failed to send container: {resp.status} {text}")
+                
 # ---------------------------
 # Run FastAPI
 # ---------------------------
