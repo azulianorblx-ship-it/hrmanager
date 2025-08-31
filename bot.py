@@ -958,7 +958,6 @@ async def send_sample_container(interaction: discord.Interaction, channel: disco
             "style": 5,
             "label": "Join!",
             "url": "https://www.roblox.com/games/83329354034194/Thornvale",
-            "custom_id": "p_209357303147663521"
           }
         }
       ]
