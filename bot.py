@@ -868,11 +868,15 @@ async def send_jsonfile_dynamic(interaction: discord.Interaction, channel: disco
                 "Please upload them in a single message here within 5 minutes."
             )
 
+            def normalize(name):
+                return re.sub(r"[\s_]", "", name.lower())
+
             def check(m):
                 return (
                     m.author.id == interaction.user.id and
-                    any(a.filename in attachment_filenames for a in m.attachments)
+                    any(normalize(a.filename) in [normalize(fn) for fn in attachment_filenames] for a in m.attachments)
                 )
+
 
             try:
                 msg = await bot.wait_for("message", check=check, timeout=300)
