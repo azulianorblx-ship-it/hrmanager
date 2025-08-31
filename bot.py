@@ -877,27 +877,25 @@ async def embed(interaction: discord.Interaction):
         await dm.send("❌ Invalid channel ID. Restart command.")
         return
 
-    # Build Discohook-style payload
-    payload = {
-        "flags": 0,
-        "components": [
-            {
-                "type": 10,
-                "content": ping
-            },
-            {
-                "type": 17,
-                "components": [
-                    {
-                        "type": 9,
-                        "components": [
-                            {"type": 10, "content": text_content}
-                        ]
-                    }
-                ]
-            }
-        ]
-    }
+     # Discohook-style payload
+    brief = {
+    "flags": 32768,
+    "components": [
+        {
+            "type": 10,
+            "content": ping
+        },
+        {
+            "type": 17,
+            "components": [
+                {
+                    "type": 10,
+                    "content": text_content
+                }
+            ]
+        }
+    ]
+}
 
     url = f"https://discord.com/api/v10/channels/{channel_id}/messages"
     headers = {
@@ -906,13 +904,12 @@ async def embed(interaction: discord.Interaction):
     }
 
     async with aiohttp.ClientSession() as session:
-        async with session.post(url, headers=headers, json=payload) as resp:
+        async with session.post(url, headers=headers, json=brief) as resp:
             text = await resp.text()
             if resp.status in (200, 201):
-                await dm.send(f"✅ Container sent to <#{channel_id}>")
+                await interaction.followup.send(f"✅ Container sent to <#{channel_id}>")
             else:
-                await dm.send(f"❌ Failed: {resp.status} {text}")
-
+                await interaction.followup.send(f"❌ Failed to send container: {resp.status} {text}")
 
 @bot.tree.command(
     name="staffjoin",
