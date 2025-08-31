@@ -835,15 +835,20 @@ async def close_modmail(interaction: discord.Interaction, user: discord.User):
     await interaction.response.send_message(f"✅ Closed modmail ticket for {user.mention}.", ephemeral=True)
     await log_action(bot, f"{interaction.user} closed modmail for {user}")
 
-@bot.tree.command(name="send_jsonfile", description="Send a raw JSON file to a channel", guild=discord.Object(id=GUILD_ID))
-@app_commands.describe(channel="Channel to send to", file="Upload your JSON file")
-async def send_jsonfile(interaction: discord.Interaction, channel: discord.TextChannel, file: discord.Attachment):
+@bot.tree.command(
+    name="send_jsonfile",
+    description="Send a JSON message with optional attachments",
+    guild=discord.Object(id=GUILD_ID)
+)
+@app_commands.describe(channel="Channel to send to", json_file="Upload a Discohook JSON file")
+async def send_jsonfile(interaction: discord.Interaction, channel: discord.TextChannel, json_file: discord.Attachment):
     if not await require_role(interaction, ROLE_DOCUMENT_MANAGER):
         return
 
     try:
-        content = await file.read()
-        payload = json.loads(content)
+        # Load JSON
+        raw = await json_file.read()
+        payload = json.loads(raw.decode("utf-8"))
     except Exception as e:
         await interaction.response.send_message(f"❌ Invalid JSON: {e}", ephemeral=True)
         return
@@ -851,13 +856,29 @@ async def send_jsonfile(interaction: discord.Interaction, channel: discord.TextC
     url = f"https://discord.com/api/v10/channels/{channel.id}/messages"
     headers = {"Authorization": f"Bot {os.environ['DISCORD_TOKEN']}"}
 
+    # collect attachments (skip the first which is the json file)
+    attachments = [a for a in interaction.attachments if a != json_file]
+
     async with aiohttp.ClientSession() as session:
-        async with session.post(url, headers=headers, json=payload) as r:
-            if r.status == 200:
+        form = aiohttp.FormData()
+        form.add_field("payload_json", json.dumps(payload))
+
+        # add uploaded files
+        for i, att in enumerate(attachments):
+            data = await att.read()
+            form.add_field(
+                f"files[{i}]",
+                data,
+                filename=att.filename,
+                content_type=att.content_type or "application/octet-stream"
+            )
+
+        async with session.post(url, headers=headers, data=form) as resp:
+            if resp.status == 200:
                 await interaction.response.send_message(f"✅ JSON message sent to {channel.mention}", ephemeral=True)
             else:
-                error_text = await r.text()
-                await interaction.response.send_message(f"❌ Failed to send: {r.status} {error_text}", ephemeral=True)
+                err = await resp.text()
+                await interaction.response.send_message(f"❌ Failed: {resp.status}\n{err}", ephemeral=True)
 
 # ---------------------------
 # Run FastAPI
