@@ -404,14 +404,14 @@ async def announcement(interaction: discord.Interaction, channel: discord.TextCh
     payload = {
         "flags": 0,
         "components": [
-            {"type": 10, "content": "@everyone"},  # optional ping, can be replaced with "@everyone"
+            {"type": 10, "content": "@everyone"},  # ping from user input or empty
             {
                 "type": 17,
                 "components": [
                     {
                         "type": 9,
                         "components": [
-                            {"type": 10, "content": container_text}
+                            {"type": 10, "content": container_text}  # template text goes here
                         ],
                         "accessory": {
                             "type": 2,
@@ -423,7 +423,8 @@ async def announcement(interaction: discord.Interaction, channel: discord.TextCh
                 ]
             }
         ]
-    }
+}
+
 
     url = f"https://discord.com/api/v10/channels/{channel.id}/messages"
     headers = {
