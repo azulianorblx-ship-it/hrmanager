@@ -402,7 +402,7 @@ async def announcement(interaction: discord.Interaction, channel: discord.TextCh
 
     # Build Discohook-style container payload
     payload = {
-        "flags": 0,
+        "flags": 32768,
         "components": [
             {"type": 10, "content": "@everyone"},  # ping from user input or empty
             {
@@ -511,81 +511,6 @@ async def image(interaction: discord.Interaction, channel: discord.TextChannel, 
     except Exception as e:
         await interaction.response.send_message(f"❌ Failed to send file: {e}", ephemeral=True)
 
-# ---------------------------
-# Embed Commands
-# ---------------------------
-@bot.tree.command(name="create_embedtemplate", description="Create a new embed template", guild=discord.Object(id=GUILD_ID))
-async def create_embedtemplate(interaction: discord.Interaction):
-    if not await require_role(interaction, ROLE_DOCUMENT_MANAGER):
-        return
-    await interaction.response.send_message("Check your DMs to create a new embed template.", ephemeral=True)
-    dm_channel = await interaction.user.create_dm()
-
-    fields = {
-        "name": "Template name (no spaces)",
-        "title": "Embed title",
-        "description": "Embed description",
-        "footer": "Embed footer (optional)",
-        "color": "Embed color (hex, e.g. #3498db) (optional)",
-        "image_url": "Image URL (optional)",
-        "thumbnail_url": "Thumbnail URL (optional)",
-        "channel_id": "Target channel ID (copy with Discord dev mode)",
-        "ping": "Ping (e.g. @everyone, @here, or role mention, or 'none')"
-    }
-
-    responses = {}
-    def check(m): return m.author == interaction.user and isinstance(m.channel, discord.DMChannel)
-
-    for key, prompt in fields.items():
-        await dm_channel.send(f"{prompt} (type 'skip' to leave blank)")
-        try:
-            msg = await bot.wait_for("message", check=check, timeout=600)
-            responses[key] = "" if msg.content.lower() == "skip" else msg.content
-        except asyncio.TimeoutError:
-            await dm_channel.send("Timeout. Template creation cancelled.")
-            return
-
-    color = DARK_BLUE
-    if responses.get("color"):
-        try:
-            color = discord.Color(int(responses["color"].replace("#", ""), 16))
-        except:
-            color = DARK_BLUE
-
-    channel_id = None
-    if responses.get("channel_id"):
-        digits = re.sub(r"\D", "", responses["channel_id"])
-        channel_id = int(digits) if digits else None
-
-    data = {
-        "title": responses["title"],
-        "description": responses["description"],
-        "footer": responses.get("footer", ""),
-        "color": color.value,
-        "image_url": responses.get("image_url", ""),
-        "thumbnail_url": responses.get("thumbnail_url", ""),
-        "channel_id": channel_id,
-        "ping": responses.get("ping", "none")
-    }
-
-    save_embed_template(responses["name"], data)
-    await dm_channel.send(f"✅ Embed template '{responses['name']}' saved!")
-    log_channel = interaction.guild.get_channel(LOG_CHANNEL_ID)
-    if log_channel:
-        await log_channel.send(f"📦 {interaction.user} created embed template '{responses['name']}'.")
-
-@bot.tree.command(name="list_embedtemplates", description="List all saved embed templates", guild=discord.Object(id=GUILD_ID))
-async def list_embedtemplates(interaction: discord.Interaction):
-    if not await require_role(interaction, ROLE_DOCUMENT_MANAGER):
-        return
-    templates = load_embed_templates()
-    if not templates:
-        await interaction.response.send_message("No embed templates found.", ephemeral=True)
-        return
-    await interaction.response.send_message("📑 Embed Templates:\n" + "\n".join(templates.keys()), ephemeral=True)
-
-# store ongoing embed sessions
-active_embeds = {}
 
 
 
