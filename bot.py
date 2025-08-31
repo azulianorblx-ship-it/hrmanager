@@ -837,7 +837,7 @@ async def close_modmail(interaction: discord.Interaction, user: discord.User):
 
 @bot.tree.command(
     name="send_jsonfile_dynamic",
-    description="Send a JSON message with components v2 attachments (auto detects attachment:// URLs)",
+    description="Send a JSON message with components v2 attachments",
     guild=discord.Object(id=GUILD_ID)
 )
 @app_commands.describe(
@@ -845,63 +845,73 @@ async def close_modmail(interaction: discord.Interaction, user: discord.User):
     json_file="Upload the Discohook JSON file"
 )
 async def send_jsonfile_dynamic(interaction: discord.Interaction, channel: discord.TextChannel, json_file: discord.Attachment):
+    # ✅ Role check
     if not await require_role(interaction, ROLE_DOCUMENT_MANAGER):
         return
 
+    # Defer to give user time
     await interaction.response.defer(ephemeral=True)
 
-    # Load JSON
     try:
+        # Load JSON
         raw = await json_file.read()
         payload = json.loads(raw.decode("utf-8"))
+
+        # Find attachment:// references
+        attachment_filenames = set(re.findall(r"attachment://([\w\-. ()]+)", json.dumps(payload)))
+        uploaded_files = {}
+
+        if attachment_filenames:
+            dm = await interaction.user.create_dm()
+            await dm.send(
+                f"Your JSON references the following files: {', '.join(attachment_filenames)}.\n"
+                "Please upload them in a single message here within 5 minutes."
+            )
+
+            def check(m):
+                return (
+                    m.author.id == interaction.user.id and
+                    any(a.filename in attachment_filenames for a in m.attachments)
+                )
+
+            try:
+                msg = await bot.wait_for("message", check=check, timeout=300)
+                for a in msg.attachments:
+                    if a.filename in attachment_filenames:
+                        uploaded_files[a.filename] = a
+            except asyncio.TimeoutError:
+                await interaction.followup.send("❌ Timeout waiting for required attachments. Command cancelled.")
+                return
+
+        # Build form-data request
+        form = aiohttp.FormData()
+        form.add_field("payload_json", json.dumps(payload))
+
+        for i, filename in enumerate(uploaded_files):
+            f = uploaded_files[filename]
+            data = await f.read()
+            form.add_field(
+                f"files[{i}]",
+                data,
+                filename=f.filename,
+                content_type=f.content_type or "application/octet-stream"
+            )
+
+        # Send to Discord API
+        url = f"https://discord.com/api/v10/channels/{channel.id}/messages"
+        headers = {"Authorization": f"Bot {os.environ['DISCORD_TOKEN']}"}
+
+        async with aiohttp.ClientSession() as session:
+            async with session.post(url, headers=headers, data=form) as resp:
+                if resp.status in (200, 201):
+                    await interaction.followup.send(f"✅ JSON message sent to {channel.mention}")
+                else:
+                    err = await resp.text()
+                    await interaction.followup.send(f"❌ Failed ({resp.status}): {err}")
+
     except Exception as e:
-        await interaction.followup.send(f"❌ Invalid JSON: {e}")
-        return
+        await interaction.followup.send(f"❌ Error processing JSON file: {e}")
 
-    # Detect all attachment:// filenames in JSON
-    attachment_filenames = set(re.findall(r"attachment://([\w\-. ()]+)", json.dumps(payload)))
-    uploaded_files = {}
-
-    if attachment_filenames:
-        dm = await interaction.user.create_dm()
-        await dm.send(f"Your JSON references the following files: {', '.join(attachment_filenames)}.\nPlease upload them here now.")
-
-        def check(m):
-            return m.author.id == interaction.user.id and any(a.filename in attachment_filenames for a in m.attachments)
-
-        try:
-            msg = await bot.wait_for("message", check=check, timeout=300)
-            for a in msg.attachments:
-                if a.filename in attachment_filenames:
-                    uploaded_files[a.filename] = a
-        except Exception:
-            await dm.send("❌ Timeout waiting for required attachments.")
-            return
-
-    # Build multipart/form-data request
-    form = aiohttp.FormData()
-    form.add_field("payload_json", json.dumps(payload))
-
-    for i, filename in enumerate(uploaded_files):
-        f = uploaded_files[filename]
-        data = await f.read()
-        form.add_field(
-            f"files[{i}]",
-            data,
-            filename=f.filename,
-            content_type=f.content_type or "application/octet-stream"
-        )
-
-    url = f"https://discord.com/api/v10/channels/{channel.id}/messages"
-    headers = {"Authorization": f"Bot {os.environ['DISCORD_TOKEN']}"}
-
-    async with aiohttp.ClientSession() as session:
-        async with session.post(url, headers=headers, data=form) as resp:
-            if resp.status in (200, 201):
-                await interaction.followup.send(f"✅ JSON message sent to {channel.mention}")
-            else:
-                err = await resp.text()
-                await interaction.followup.send(f"❌ Failed ({resp.status}): {err}")
 
 # ---------------------------
 # Run FastAPI
