@@ -835,61 +835,63 @@ async def send_jsonfile_dynamic(interaction: discord.Interaction, channel: disco
 
 @bot.tree.command(
     name="embed",
-    description="Send a simple container message",
+    description="Send a Discohook-style container",
     guild=discord.Object(id=GUILD_ID)
 )
 async def embed(interaction: discord.Interaction):
     if not await require_role(interaction, ROLE_DOCUMENT_MANAGER):
-        await interaction.response.send_message("❌ You do not have permission to use this.", ephemeral=True)
+        await interaction.response.send_message("❌ No permission.", ephemeral=True)
         return
 
     await interaction.response.send_message("📩 Check your DMs to build your container.", ephemeral=True)
     user = interaction.user
     dm = await user.create_dm()
 
-    # Ask for the main text
-    await dm.send("Enter the text to send in the container:")
     def check(m):
         return m.author.id == user.id and isinstance(m.channel, discord.DMChannel)
 
+    # Ask for message text
+    await dm.send("Enter the message text:")
     try:
         msg = await bot.wait_for("message", timeout=120.0, check=check)
+        text_content = msg.content
     except asyncio.TimeoutError:
-        await dm.send("⏰ Timed out. Please restart `/embed`.")
+        await dm.send("⏰ Timed out. Restart command.")
         return
-
-    content_text = msg.content
 
     # Ask for ping
-    await dm.send("Enter a ping (`@everyone`, `@here`, role mention, or `none`):")
+    await dm.send("Enter ping (`@everyone`, `@here`, role mention, or `none`):")
     try:
-        ping_msg = await bot.wait_for("message", timeout=60.0, check=check)
+        msg = await bot.wait_for("message", timeout=60.0, check=check)
+        ping = "" if msg.content.lower() == "none" else msg.content
     except asyncio.TimeoutError:
-        await dm.send("⏰ Timed out. Please restart `/embed`.")
+        await dm.send("⏰ Timed out. Restart command.")
         return
-
-    ping_text = "" if ping_msg.content.lower() == "none" else ping_msg.content
 
     # Ask for channel
-    await dm.send("Enter the channel ID to send to:")
+    await dm.send("Enter the channel ID:")
     try:
-        channel_msg = await bot.wait_for("message", timeout=60.0, check=check)
-        target_channel_id = int(channel_msg.content.strip())
+        msg = await bot.wait_for("message", timeout=60.0, check=check)
+        channel_id = int(msg.content.strip())
     except (asyncio.TimeoutError, ValueError):
-        await dm.send("❌ Invalid input. Please restart `/embed`.")
+        await dm.send("❌ Invalid channel ID. Restart command.")
         return
 
-    # Build payload
-    newmessage = {
-        "content": ping_text,
+    # Build Discohook-style payload
+    payload = {
+        "flags": 0,
         "components": [
+            {
+                "type": 10,
+                "content": ping
+            },
             {
                 "type": 17,
                 "components": [
                     {
                         "type": 9,
                         "components": [
-                            {"type": 10, "content": content_text}
+                            {"type": 10, "content": text_content}
                         ]
                     }
                 ]
@@ -897,19 +899,19 @@ async def embed(interaction: discord.Interaction):
         ]
     }
 
-    url = f"https://discord.com/api/v10/channels/{target_channel_id}/messages"
+    url = f"https://discord.com/api/v10/channels/{channel_id}/messages"
     headers = {
         "Authorization": f"Bot {os.environ['DISCORD_TOKEN']}",
         "Content-Type": "application/json"
     }
 
     async with aiohttp.ClientSession() as session:
-        async with session.post(url, headers=headers, json=newmessage) as resp:
+        async with session.post(url, headers=headers, json=payload) as resp:
             text = await resp.text()
             if resp.status in (200, 201):
-                await dm.send(f"✅ Container successfully sent to <#{target_channel_id}>")
+                await dm.send(f"✅ Container sent to <#{channel_id}>")
             else:
-                await dm.send(f"❌ Failed to send container: {resp.status} {text}")
+                await dm.send(f"❌ Failed: {resp.status} {text}")
 
 
 @bot.tree.command(
@@ -1095,7 +1097,7 @@ async def send_sample_container(interaction: discord.Interaction, channel: disco
             "style": 5,
             "label": "Join!",
             "url": "https://www.roblox.com/games/83329354034194/Thornvale",
-            "custom_id": "p_209357303147663521"
+
           }
         }
       ]
