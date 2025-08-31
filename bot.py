@@ -835,6 +835,30 @@ async def close_modmail(interaction: discord.Interaction, user: discord.User):
     await interaction.response.send_message(f"✅ Closed modmail ticket for {user.mention}.", ephemeral=True)
     await log_action(bot, f"{interaction.user} closed modmail for {user}")
 
+@bot.tree.command(name="send_jsonfile", description="Send a raw JSON file to a channel", guild=discord.Object(id=GUILD_ID))
+@app_commands.describe(channel="Channel to send to", file="Upload your JSON file")
+async def send_jsonfile(interaction: discord.Interaction, channel: discord.TextChannel, file: discord.Attachment):
+    if not await require_role(interaction, ROLE_DOCUMENT_MANAGER):
+        return
+
+    try:
+        content = await file.read()
+        payload = json.loads(content)
+    except Exception as e:
+        await interaction.response.send_message(f"❌ Invalid JSON: {e}", ephemeral=True)
+        return
+
+    url = f"https://discord.com/api/v10/channels/{channel.id}/messages"
+    headers = {"Authorization": f"Bot {os.environ['DISCORD_TOKEN']}"}
+
+    async with aiohttp.ClientSession() as session:
+        async with session.post(url, headers=headers, json=payload) as r:
+            if r.status == 200:
+                await interaction.response.send_message(f"✅ JSON message sent to {channel.mention}", ephemeral=True)
+            else:
+                error_text = await r.text()
+                await interaction.response.send_message(f"❌ Failed to send: {r.status} {error_text}", ephemeral=True)
+
 # ---------------------------
 # Run FastAPI
 # ---------------------------
