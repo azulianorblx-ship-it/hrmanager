@@ -349,19 +349,33 @@ class AnnouncementView(discord.ui.View):
 # ---------------------------
 # Announcement Command
 # ---------------------------
-@bot.tree.command(name="announcement", description="Send an announcement using the template", guild=discord.Object(id=GUILD_ID))
+# ---------------------------
+# Announcement Command (Container Version)
+# ---------------------------
+@bot.tree.command(
+    name="announcement",
+    description="Send an announcement using the template as a container",
+    guild=discord.Object(id=GUILD_ID)
+)
 @app_commands.describe(channel="Announcement channel to post in")
 async def announcement(interaction: discord.Interaction, channel: discord.TextChannel):
     if not await require_role(interaction, ROLE_ANNOUNCEMENT):
         return
+
     await interaction.response.send_message("Filling announcement template. Check your DMs.", ephemeral=True)
+
+    # Load template
     with open("templates.json", "r") as f:
         templates = json.load(f)
     if "announcement" not in templates:
-        await interaction.followup.send("Announcement template not found. Use /update_anntemplate first.", ephemeral=True)
+        await interaction.followup.send(
+            "Announcement template not found. Use /update_anntemplate first.", ephemeral=True
+        )
         return
+
     fields = templates["announcement"]["fields"]
 
+    # Ask user for all fields
     try:
         dm_channel = await interaction.user.create_dm()
         responses = {}
@@ -374,27 +388,62 @@ async def announcement(interaction: discord.Interaction, channel: discord.TextCh
         await dm_channel.send("Timeout waiting for input. Announcement cancelled.")
         return
 
+    # Render DOCX
     doc = DocxTemplate(templates["announcement"]["file_path"])
     doc.render(responses)
     output_docx = f"generated/{interaction.user.id}_announcement.docx"
     doc.save(output_docx)
     view_url = f"https://view.officeapps.live.com/op/embed.aspx?src={BASE_URL}/generated/{os.path.basename(output_docx)}"
 
+    # Prepare announcement text
     subject = responses.get("Subject", "Announcement")
     full_name = responses.get("FullName", interaction.user.name)
-    description = f"Please find a letter attached from {full_name}.\n[View Document]({view_url})"
-    embed = Embed(
-        title=f"<:TVALogo:1408794388129120316> {subject}",
-        description=description,
-        color=DARK_BLUE,
-        timestamp=datetime.utcnow()
-    )
-    embed.set_footer(text=f"Sent by {full_name}")
+    container_text = f"Please find a letter attached from {full_name}.\n[View Document]({view_url})"
 
-    await dm_channel.send("Preview your announcement below. Accept to post, Deny to cancel.", embed=embed, view=AnnouncementView(interaction.user, embed, channel))
+    # Build Discohook-style container payload
+    payload = {
+        "flags": 0,
+        "components": [
+            {"type": 10, "content": "@everyone"},  # optional ping, can be replaced with "@everyone"
+            {
+                "type": 17,
+                "components": [
+                    {
+                        "type": 9,
+                        "components": [
+                            {"type": 10, "content": container_text}
+                        ],
+                        "accessory": {
+                            "type": 2,
+                            "style": 5,
+                            "label": "View Document",
+                            "url": view_url
+                        }
+                    }
+                ]
+            }
+        ]
+    }
+
+    url = f"https://discord.com/api/v10/channels/{channel.id}/messages"
+    headers = {
+        "Authorization": f"Bot {os.environ['DISCORD_TOKEN']}",
+        "Content-Type": "application/json"
+    }
+
+    async with aiohttp.ClientSession() as session:
+        async with session.post(url, headers=headers, json=payload) as resp:
+            text = await resp.text()
+            if resp.status in (200, 201):
+                await dm_channel.send(f"✅ Announcement container sent to {channel.mention}")
+            else:
+                await dm_channel.send(f"❌ Failed to send container: {resp.status} {text}")
+
+    # Optional logging
     log_channel = interaction.guild.get_channel(LOG_CHANNEL_ID)
     if log_channel:
-        await log_channel.send(f"📝 Announcement preview sent to {interaction.user} for {channel.mention}.")
+        await log_channel.send(f"📝 Announcement container sent by {interaction.user} to {channel.mention}")
+
 
 # ---------------------------
 # Update Announcement Template Command
