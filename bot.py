@@ -918,29 +918,41 @@ async def send_jsonfile_dynamic(interaction: discord.Interaction, channel: disco
 
 @bot.tree.command(
     name="send_sample_container",
-    description="Send a sample components v2 container to a channel",
+    description="Send a Discohook-style container",
     guild=discord.Object(id=GUILD_ID)
 )
 @app_commands.describe(channel="Channel to send the container to")
 async def send_sample_container(interaction: discord.Interaction, channel: discord.TextChannel):
-    # Role check (optional)
     if not await require_role(interaction, ROLE_DOCUMENT_MANAGER):
         return
 
     await interaction.response.defer(ephemeral=True)
 
-    # Sample payload: a button + content
+    # Discohook-style payload
     payload = {
-        "content": "Here is a sample container with a button!",
+        "flags": 32768,
         "components": [
             {
-                "type": 1,  # Action row
+                "type": 17,
                 "components": [
                     {
-                        "type": 2,  # Button
-                        "style": 1,  # Primary
-                        "label": "Click Me",
-                        "custom_id": "sample_button_1"
+                        "type": 9,
+                        "components": [
+                            {
+                                "type": 10,
+                                "content": "# sample\nthis is a sample"
+                            }
+                        ],
+                        "accessory": {
+                            "style": 1,
+                            "type": 2,
+                            "label": "test",
+                            "flow": {
+                                "actions": []
+                            },
+                            "flowId": "209344485153312952",
+                            "custom_id": "p_209344485883121849"
+                        }
                     }
                 ]
             }
@@ -948,15 +960,19 @@ async def send_sample_container(interaction: discord.Interaction, channel: disco
     }
 
     url = f"https://discord.com/api/v10/channels/{channel.id}/messages"
-    headers = {"Authorization": f"Bot {os.environ['DISCORD_TOKEN']}"}
+    headers = {
+        "Authorization": f"Bot {os.environ['DISCORD_TOKEN']}",
+        "Content-Type": "application/json"
+    }
 
     async with aiohttp.ClientSession() as session:
         async with session.post(url, headers=headers, json=payload) as resp:
+            text = await resp.text()
             if resp.status in (200, 201):
-                await interaction.followup.send(f"✅ Sample container sent to {channel.mention}")
+                await interaction.followup.send(f"✅ Container sent to {channel.mention}")
             else:
-                err = await resp.text()
-                await interaction.followup.send(f"❌ Failed ({resp.status}): {err}")
+                await interaction.followup.send(f"❌ Failed to send container: {resp.status} {text}")
+
 
 
 # ---------------------------
