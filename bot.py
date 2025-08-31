@@ -930,34 +930,42 @@ async def send_sample_container(interaction: discord.Interaction, channel: disco
 
     # Discohook-style payload
     payload = {
-        "flags": 32768,
-        "components": [
+  "flags": 32768,
+  "components": [
+    {
+      "type": 17,
+      "components": [
+        {
+          "type": 12,
+          "items": [
             {
-                "type": 17,
-                "components": [
-                    {
-                        "type": 9,
-                        "components": [
-                            {
-                                "type": 10,
-                                "content": "# sample\nthis is a sample"
-                            }
-                        ],
-                        "accessory": {
-                            "style": 1,
-                            "type": 2,
-                            "label": "test",
-                            "flow": {
-                                "actions": []
-                            },
-                            "flowId": "209344485153312952",
-                            "custom_id": "p_209344485883121849"
-                        }
-                    }
-                ]
+              "media": {
+                "url": "https://media.discordapp.net/attachments/1411299414869282847/1411759919241363527/Banners_11.png?ex=68b5d361&is=68b481e1&hm=95ceabba5571b5baf6bad6f9efe6c89ace8c0f66e659b9c5f4e043b9861c64fd&=&format=webp&quality=lossless"
+              }
             }
-        ]
+          ]
+        },
+        {
+          "type": 9,
+          "components": [
+            {
+              "type": 10,
+              "content": "# Gates opened,\nWe have now opened our gates to allow students to begin making their way to the hall. Please line up with your form group and await for the Headteacher to begin morning announcements.\n\nPlease ensure you are wearing your uniform, or it will be automatically applied to you when you join. Sixth Form students and visitors must visit reception to request their lanyard."
+            }
+          ],
+          "accessory": {
+            "type": 2,
+            "style": 5,
+            "label": "Join!",
+            "url": "https://www.roblox.com/games/83329354034194/Thornvale",
+            "custom_id": "p_209357303147663521"
+          }
+        }
+      ]
     }
+  ]
+}
+
 
     url = f"https://discord.com/api/v10/channels/{channel.id}/messages"
     headers = {
